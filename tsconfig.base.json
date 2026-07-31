@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    // "bundler" lets us import the `shared` workspace package straight from its
+    // TypeScript source (see shared/package.json "exports"). Both consumers are
+    // bundled (Vite for the extension, tsup for the MCP server), so there is no
+    // intermediate build step for shared and therefore no stale dist to debug.
+    "moduleResolution": "bundler",
+    // Imports carry explicit .ts extensions so that Node can run the test files
+    // directly via its built-in type stripping, with no build step.
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "exactOptionalPropertyTypes": true,
+
+    "declaration": true,
+    "sourceMap": true,
+    "noEmit": true
+  }
+}

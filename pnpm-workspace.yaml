@@ -1,0 +1,9 @@
+packages:
+  - shared
+  - extension
+  - mcp-server
+
+# pnpm blocks dependency install scripts by default. esbuild's postinstall fetches
+# its platform-native binary, which tsup and Vite both need in order to run at all.
+allowBuilds:
+  esbuild: true

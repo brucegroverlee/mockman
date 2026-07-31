@@ -1,0 +1,15 @@
+{
+  "name": "@network-mock/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Types, request matching and enablement rules shared by the extension and the MCP server",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "echo \"(shared is consumed as source by its bundlers — nothing to build)\"",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --test \"src/**/*.test.ts\""
+  }
+}

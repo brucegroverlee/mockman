@@ -1,0 +1,11 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Local bridge secret — never commit
+bridge-token
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+*.log

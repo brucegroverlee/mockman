@@ -1,0 +1,56 @@
+/**
+ * Minimal static server for verifying the interception engine in a real browser,
+ * without needing the whole extension installed.
+ *
+ * Serves the built interceptor plus a test page, and a couple of *real* endpoints
+ * so passthrough can be checked as well as mocking.
+ */
+
+import { createServer } from 'node:http';
+import { readFile } from 'node:fs/promises';
+import { extname, join, normalize } from 'node:path';
+
+const HERE = import.meta.dirname;
+const DIST = process.argv[2];
+const PORT = 8899;
+
+const TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.map': 'application/json',
+  '.css': 'text/css',
+};
+
+createServer(async (req, res) => {
+  const url = new URL(req.url, `http://localhost:${PORT}`);
+  const path = url.pathname;
+
+  // Real endpoints, to prove unmatched requests still reach the network.
+  if (path === '/api/real') {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ real: true, via: 'network' }));
+    return;
+  }
+  if (path === '/api/xhr-real') {
+    res.writeHead(201, { 'content-type': 'application/json', 'x-real-header': 'yes' });
+    res.end(JSON.stringify({ xhrReal: true }));
+    return;
+  }
+
+  try {
+    let file;
+    if (path.startsWith('/dist/')) {
+      file = join(DIST, normalize(path.slice('/dist/'.length)));
+    } else {
+      file = join(HERE, path === '/' ? 'index.html' : normalize(path));
+    }
+    const body = await readFile(file);
+    res.writeHead(200, { 'content-type': TYPES[extname(file)] ?? 'application/octet-stream' });
+    res.end(body);
+  } catch {
+    res.writeHead(404, { 'content-type': 'text/plain' });
+    res.end('not found');
+  }
+}).listen(PORT, '127.0.0.1', () => {
+  console.log(`verify server on http://127.0.0.1:${PORT}`);
+});

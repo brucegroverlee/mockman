@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "Network Mock",
+  "version": "0.1.0",
+  "description": "Mock network responses with groups, tags, per-tab targeting and MCP access, from a DevTools panel.",
+
+  "minimum_chrome_version": "111",
+
+  "devtools_page": "devtools/devtools.html",
+
+  "background": {
+    "service_worker": "background/index.js",
+    "type": "module"
+  },
+
+  "permissions": ["storage", "unlimitedStorage", "tabs", "scripting"],
+  "host_permissions": ["<all_urls>"],
+
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["injected/intercept.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "world": "MAIN"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content/relay.js"],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ]
+}

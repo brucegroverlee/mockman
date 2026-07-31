@@ -1,0 +1,176 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>pending</title>
+  </head>
+  <body>
+    <h1>Network Mock — interception engine verification</h1>
+    <pre id="out">running…</pre>
+
+    <!-- The real built artefact, loaded exactly as a MAIN-world content script would be. -->
+    <script src="/dist/injected/intercept.js"></script>
+
+    <script>
+      // Stand in for the ISOLATED-world relay: hand the interceptor its config.
+      const mock = (over) => ({
+        mockId: 'm1',
+        groupId: 'g1',
+        label: 'test / m1',
+        match: { method: 'GET', urlPattern: '*/api/users*', patternKind: 'glob' },
+        response: {
+          status: 200,
+          headers: { 'x-mocked-by': 'network-mock' },
+          body: '{"mocked":true}',
+          bodyKind: 'json',
+        },
+        ...over,
+      });
+
+      const config = {
+        active: true,
+        mocks: [
+          mock({}),
+          mock({
+            mockId: 'm2',
+            label: 'test / teapot',
+            match: { method: 'GET', urlPattern: '*/api/teapot', patternKind: 'glob' },
+            response: { status: 418, headers: {}, body: 'short and stout', bodyKind: 'text' },
+          }),
+          mock({
+            mockId: 'm3',
+            label: 'test / xhr',
+            match: { method: 'GET', urlPattern: '*/api/xhr-mocked', patternKind: 'glob' },
+            response: {
+              status: 200,
+              headers: { 'x-via': 'xhr-mock' },
+              body: '{"xhr":"mocked"}',
+              bodyKind: 'json',
+            },
+          }),
+          mock({
+            mockId: 'm4',
+            label: 'test / post-only',
+            match: { method: 'POST', urlPattern: '*/api/method-test', patternKind: 'glob' },
+            response: { status: 200, headers: {}, body: '{"post":true}', bodyKind: 'json' },
+          }),
+        ],
+      };
+
+      const hits = [];
+      document.addEventListener('network-mock:hit', (e) => hits.push(e.detail.hit));
+      document.dispatchEvent(
+        new CustomEvent('network-mock:config', { detail: { config } }),
+      );
+
+      const results = [];
+      const check = (name, pass, detail) => results.push({ name, pass, detail });
+
+      function xhrGet(url) {
+        return new Promise((resolve) => {
+          const order = [];
+          const xhr = new XMLHttpRequest();
+          xhr.open('GET', url);
+          xhr.onreadystatechange = () => order.push('rs' + xhr.readyState);
+          xhr.onload = () => order.push('load');
+          xhr.onloadend = () => {
+            order.push('loadend');
+            resolve({
+              status: xhr.status,
+              statusText: xhr.statusText,
+              responseText: xhr.responseText,
+              allHeaders: xhr.getAllResponseHeaders(),
+              oneHeader: xhr.getResponseHeader('x-via'),
+              responseURL: xhr.responseURL,
+              order,
+            });
+          };
+          xhr.send();
+        });
+      }
+
+      (async () => {
+        // --- fetch: mocked ---
+        const r1 = await fetch('/api/users?page=1');
+        const b1 = await r1.json();
+        check('fetch mocked: status 200', r1.status === 200, r1.status);
+        check('fetch mocked: body substituted', b1.mocked === true, JSON.stringify(b1));
+        check(
+          'fetch mocked: custom header present',
+          r1.headers.get('x-mocked-by') === 'network-mock',
+          r1.headers.get('x-mocked-by'),
+        );
+        check(
+          'fetch mocked: content-type defaulted to json',
+          (r1.headers.get('content-type') || '').includes('application/json'),
+          r1.headers.get('content-type'),
+        );
+        check('fetch mocked: url preserved', r1.url.includes('/api/users'), r1.url);
+
+        // --- fetch: passthrough reaches the real network ---
+        const r2 = await fetch('/api/real');
+        const b2 = await r2.json();
+        check('fetch passthrough: real response', b2.via === 'network', JSON.stringify(b2));
+
+        // --- fetch: non-200 status and text body ---
+        const r3 = await fetch('/api/teapot');
+        check('fetch mocked: status 418', r3.status === 418, r3.status);
+        check('fetch mocked: statusText derived', r3.statusText === "I'm a Teapot", r3.statusText);
+        check('fetch mocked: text body', (await r3.text()) === 'short and stout');
+
+        // --- fetch: method must match ---
+        const r4 = await fetch('/api/method-test'); // GET, mock is POST-only
+        check('fetch: method mismatch passes through', r4.status === 404, r4.status);
+
+        // --- XHR: mocked ---
+        const x1 = await xhrGet('/api/xhr-mocked');
+        check('xhr mocked: status', x1.status === 200, x1.status);
+        check('xhr mocked: responseText', x1.responseText === '{"xhr":"mocked"}', x1.responseText);
+        check('xhr mocked: getResponseHeader', x1.oneHeader === 'xhr-mock', x1.oneHeader);
+        check(
+          'xhr mocked: getAllResponseHeaders',
+          x1.allHeaders.includes('x-via: xhr-mock'),
+          x1.allHeaders,
+        );
+        check('xhr mocked: responseURL set', x1.responseURL.includes('/api/xhr-mocked'), x1.responseURL);
+        check(
+          'xhr mocked: event order rs2,rs3,rs4,load,loadend',
+          x1.order.join(',') === 'rs2,rs3,rs4,load,loadend',
+          x1.order.join(','),
+        );
+
+        // --- XHR: passthrough ---
+        const x2 = await xhrGet('/api/xhr-real');
+        check('xhr passthrough: real status 201', x2.status === 201, x2.status);
+        check('xhr passthrough: real body', x2.responseText.includes('xhrReal'), x2.responseText);
+
+        // --- hit reporting ---
+        check(
+          'hits reported for mocked requests',
+          hits.some((h) => h.outcome === 'mocked' && h.url.includes('/api/users')),
+          JSON.stringify(hits.filter((h) => h.outcome === 'mocked').map((h) => h.url)),
+        );
+        check(
+          'hits reported for passed requests',
+          hits.some((h) => h.outcome === 'passed' && h.url.includes('/api/real')),
+          JSON.stringify(hits.filter((h) => h.outcome === 'passed').map((h) => h.url)),
+        );
+
+        const failed = results.filter((r) => !r.pass);
+        const summary =
+          `${results.length - failed.length}/${results.length} passed\n\n` +
+          results
+            .map((r) => `${r.pass ? 'PASS' : 'FAIL'}  ${r.name}` + (r.pass ? '' : `\n        got: ${r.detail}`))
+            .join('\n');
+
+        document.getElementById('out').textContent = summary;
+        document.title = failed.length === 0 ? 'ALL PASS' : `${failed.length} FAILED`;
+        console.log(summary);
+      })().catch((error) => {
+        document.getElementById('out').textContent = 'threw: ' + error.stack;
+        document.title = 'THREW';
+        console.error(error);
+      });
+    </script>
+  </body>
+</html>
