@@ -147,6 +147,19 @@ sources, because neither is enough alone:
 Both sources are scoped to the inspected tab, so the log only ever shows the tab you
 opened the panel on. Over MCP, `get_hit_log` returns the same records.
 
+Its filter bar mirrors Chrome's Network panel — same buckets, same wording, and the
+same click behaviour (a plain click picks one type, ctrl/cmd-click adds or removes
+one). It defaults to **Fetch/XHR**, because those are the only requests this extension
+can mock; everything else in the log is page furniture you cannot act on from here.
+**Invert** flips the type chips and the text query together, which is the quickest way
+to answer "what *else* is this page doing?". The "Mocked only" checkbox is a separate
+outcome switch and is deliberately not inverted along with them.
+
+Buckets come from Chrome's `_resourceType` on each HAR entry, falling back to the mime
+type when it is absent. Mocked rows are always Fetch/XHR, and that is not a guess: the
+interceptor patches exactly three APIs, so anything mocked was an API call by
+construction.
+
 If you are wondering whether a mock fired, the hit log is where to look — never the
 Network panel.
 

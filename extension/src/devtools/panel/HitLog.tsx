@@ -1,11 +1,13 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { createFolder, createMock, findFolder, findNode } from '@network-mock/shared';
 import type { HttpMethod, Workspace } from '@network-mock/shared';
 
 import { useNetworkLog } from './network.ts';
 import type { LogEntry, PassedEntry } from './network.ts';
 import type { Update } from './messaging.ts';
-import { statusClass } from './labels.ts';
+import { DEFAULT_LOG_CATEGORY, LOG_CATEGORIES, statusClass } from './labels.ts';
+import type { LogCategory } from './labels.ts';
+import { readStored, writeStored } from './storage.ts';
 
 /**
  * The bottom log: what the inspected tab actually did.
@@ -23,6 +25,71 @@ import { statusClass } from './labels.ts';
 
 /** Where captured mocks go when no folder is selected. */
 const CAPTURE_FOLDER = 'Captured';
+
+const CATEGORY_KEY = 'network-mock:log-categories';
+const INVERT_KEY = 'network-mock:log-invert';
+
+/**
+ * The resource-type chips and the Invert switch.
+ *
+ * An **empty** set means "All" — no type constraint — rather than "every
+ * category listed". Storing it that way means a category added later is
+ * included automatically for anyone whose filter was already on All, instead of
+ * silently going missing because it was not in the set they last saved.
+ *
+ * Selection behaves like Chrome's: a plain click selects exactly one type,
+ * ctrl/cmd-click adds or removes one. Deselecting the last chip falls back to
+ * All, because an empty log with every chip dark is a puzzle, not a filter.
+ */
+function useLogFilter(): {
+  categories: ReadonlySet<LogCategory>;
+  invert: boolean;
+  setInvert: (invert: boolean) => void;
+  toggleCategory: (category: LogCategory, additive: boolean) => void;
+  showAll: () => void;
+} {
+  const [categories, setCategories] = useState<ReadonlySet<LogCategory>>(() => {
+    const stored = readStored(CATEGORY_KEY);
+    if (stored === null) return new Set([DEFAULT_LOG_CATEGORY]);
+    // An empty stored value is a deliberate "All", not a missing preference.
+    const known = new Set(LOG_CATEGORIES.map((c) => c.id));
+    return new Set(stored.split(',').filter((id): id is LogCategory => known.has(id as LogCategory)));
+  });
+
+  const [invert, setInvertState] = useState(() => readStored(INVERT_KEY) === 'true');
+
+  const commit = useCallback((next: ReadonlySet<LogCategory>) => {
+    setCategories(next);
+    writeStored(CATEGORY_KEY, [...next].join(','));
+  }, []);
+
+  const toggleCategory = useCallback(
+    (category: LogCategory, additive: boolean) => {
+      if (!additive) {
+        commit(new Set([category]));
+        return;
+      }
+      const next = new Set(categories);
+      if (next.has(category)) next.delete(category);
+      else next.add(category);
+      commit(next);
+    },
+    [categories, commit],
+  );
+
+  const setInvert = useCallback((next: boolean) => {
+    setInvertState(next);
+    writeStored(INVERT_KEY, next);
+  }, []);
+
+  return {
+    categories,
+    invert,
+    setInvert,
+    toggleCategory,
+    showAll: useCallback(() => commit(new Set()), [commit]),
+  };
+}
 
 function patternFor(url: string): string {
   try {
@@ -60,15 +127,26 @@ export function HitLog({
   const [filter, setFilter] = useState('');
   const [onlyMocked, setOnlyMocked] = useState(false);
   const [capturing, setCapturing] = useState<string | null>(null);
+  const { categories, invert, setInvert, toggleCategory, showAll } = useLogFilter();
 
   const visible = useMemo(() => {
     const needle = filter.trim().toLowerCase();
+
     return entries.filter((entry) => {
+      // "Mocked only" is an outcome switch, not part of "the filter", so Invert
+      // does not touch it — same as Chrome, where Invert flips the query and the
+      // type chips but not the other toggles.
       if (onlyMocked && entry.kind !== 'mocked') return false;
-      if (!needle) return true;
-      return entry.url.toLowerCase().includes(needle) || entry.method.toLowerCase().includes(needle);
+
+      const matchesType = categories.size === 0 || categories.has(entry.category);
+      const matchesText =
+        !needle ||
+        entry.url.toLowerCase().includes(needle) ||
+        entry.method.toLowerCase().includes(needle);
+
+      return invert ? !(matchesType && matchesText) : matchesType && matchesText;
     });
-  }, [entries, filter, onlyMocked]);
+  }, [entries, filter, onlyMocked, categories, invert]);
 
   const capture = async (entry: PassedEntry): Promise<void> => {
     setCapturing(entry.key);
@@ -152,12 +230,59 @@ export function HitLog({
         <button onClick={() => void clear()}>Clear</button>
       </div>
 
+      <div className="log-filters" role="group" aria-label="Filter by resource type">
+        <button
+          className={`type-chip ${categories.size === 0 ? 'on' : ''}`}
+          title="Show every resource type"
+          onClick={showAll}
+        >
+          All
+        </button>
+
+        {LOG_CATEGORIES.map(({ id, label }) => (
+          <button
+            key={id}
+            className={`type-chip ${categories.has(id) ? 'on' : ''}`}
+            title={
+              categories.has(id)
+                ? `${label} — ctrl/cmd-click to remove it from the selection`
+                : `Show only ${label} — ctrl/cmd-click to add it to the selection`
+            }
+            aria-pressed={categories.has(id)}
+            onClick={(e) => toggleCategory(id, e.ctrlKey || e.metaKey)}
+          >
+            {label}
+          </button>
+        ))}
+
+        <span className="spacer" />
+
+        <label
+          className={`inline-check invert ${invert ? 'on' : ''}`}
+          title="Show everything the filter above would have hidden"
+        >
+          <input
+            type="checkbox"
+            checked={invert}
+            onChange={(e) => setInvert(e.target.checked)}
+          />
+          Invert
+        </label>
+      </div>
+
       <div className="log-rows">
         {visible.length === 0 && (
           <p className="empty">
-            {entries.length === 0
-              ? 'Nothing yet — this log only sees requests made while the panel is open. Reload the page to capture its traffic.'
-              : 'Nothing matches that filter.'}
+            {entries.length === 0 ? (
+              'Nothing yet — this log only sees requests made while the panel is open. Reload the page to capture its traffic.'
+            ) : (
+              <>
+                {entries.length} request{entries.length === 1 ? '' : 's'}, none matching the filter.{' '}
+                <button className="link" onClick={showAll}>
+                  Show all types
+                </button>
+              </>
+            )}
           </p>
         )}
 

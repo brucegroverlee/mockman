@@ -855,6 +855,80 @@ button.danger:hover:not(:disabled) {
   flex: none;
 }
 
+/*
+ * The resource-type filter bar.
+ *
+ * `flex-wrap` rather than a horizontal scroller: eleven chips do not fit a
+ * narrow docked panel, and a chip you have to scroll to find is a chip you
+ * never use. Wrapping costs a row of height only when the panel is genuinely
+ * narrow.
+ */
+.log-filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 3px;
+  padding: 3px 8px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  flex: none;
+}
+
+.type-chip {
+  font-size: 11px;
+  line-height: 16px;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: none;
+  color: var(--muted);
+  white-space: nowrap;
+  /* Explicit, because the global `button { min-width: 0 }` would otherwise let
+     a chip be squashed to a sliver instead of wrapping to the next line. */
+  flex: none;
+}
+
+.type-chip:hover:not(.on) {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+.type-chip.on {
+  background: var(--sel);
+  border-color: var(--sel);
+  color: var(--sel-fg);
+  font-weight: 600;
+}
+
+/* Inverting turns the whole bar into a statement about what is *hidden*, so it
+   gets a warning tint — otherwise an empty log after a stray click looks like a
+   bug rather than a filter. */
+.inline-check.invert {
+  font-size: 11px;
+  color: var(--muted);
+  padding: 0 6px;
+  border-radius: 9px;
+  white-space: nowrap;
+}
+
+.inline-check.invert.on {
+  background: var(--warn-bg);
+  color: var(--warn-fg);
+  font-weight: 600;
+}
+
+button.link {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+button.link:hover {
+  background: none;
+}
+
 .log-rows {
   flex: 1;
   min-height: 0;

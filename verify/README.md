@@ -86,8 +86,11 @@ same messages the service worker does, and fires a few fake `onRequestFinished`
 entries so the hit log has something in it.
 
 Good for: layout at any window size, light and dark themes, the tree, search, the
-detail panel, drag-and-drop, and **mock it**. It is a harness for eyeballing and
-smoke-testing, not a substitute for the manual pass below.
+detail panel, drag-and-drop, **mock it**, and the log's resource-type filter — the
+fake traffic covers every bucket the filter bar offers, including a wasm file served
+as `fetch` (which must still land under **Wasm**, since that bucket goes by mime type).
+It is a harness for eyeballing and smoke-testing, not a substitute for the manual pass
+below.
 
 ## What these do not cover
 

@@ -5,6 +5,7 @@ import { Detail } from './Detail.tsx';
 import { HitLog } from './HitLog.tsx';
 import { Tree } from './Tree.tsx';
 import { useBridgeStatus, useTabTargeting, useWorkspace } from './messaging.ts';
+import { readStored, writeStored } from './storage.ts';
 
 /**
  * The panel shell.
@@ -209,24 +210,6 @@ function useDragSize(
   return { size, onPointerDown, reset };
 }
 
-// localStorage is available in a DevTools panel, but not in every context this
-// bundle can be loaded into (the verify harness, a sandboxed frame), and the
-// accessor itself can throw. A lost pane size is not worth a blank panel.
-function readStored(key: string): string | null {
-  try {
-    return localStorage.getItem(key);
-  } catch {
-    return null;
-  }
-}
-
-function writeStored(key: string, value: number): void {
-  try {
-    localStorage.setItem(key, String(value));
-  } catch {
-    /* ignore: the size simply will not be remembered */
-  }
-}
 
 function SplitBody({
   left,

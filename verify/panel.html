@@ -139,15 +139,36 @@
       // passed, and one that a mock answered.
       setTimeout(() => {
         const net = chrome.devtools.network.onRequestFinished;
-        const entry = (method, url, status, body) => ({
+        // `_resourceType` and `content.mimeType` are what the filter bar reads;
+        // both are included so the chips can be exercised here.
+        const entry = (method, url, status, body, resourceType, mimeType) => ({
           startedDateTime: new Date().toISOString(),
+          _resourceType: resourceType,
           request: { method, url, postData: undefined },
-          response: { status, headers: [{ name: 'content-type', value: 'application/json' }] },
+          response: {
+            status,
+            headers: [{ name: 'content-type', value: mimeType }],
+            content: { mimeType },
+          },
           getContent: (cb) => cb(body),
         });
-        net._emit(entry('GET', 'https://otel.observability.app.id.example.com/v1/metrics', 200, '{}'));
-        net._emit(entry('GET', 'https://jenkins.example.com/view/job/PR-1/api/json', 200, '{"building":false}'));
-        net._emit(entry('POST', 'https://stable.example.com/v2/jukeboxes/state/current', 401, '{"error":"nope"}'));
+
+        const traffic = [
+          ['GET', 'https://otel.observability.app.id.example.com/v1/metrics', 200, '{}', 'xhr', 'application/json'],
+          ['GET', 'https://jenkins.example.com/view/job/PR-1/api/json', 200, '{"building":false}', 'fetch', 'application/json'],
+          ['POST', 'https://stable.example.com/v2/jukeboxes/state/current', 401, '{"error":"nope"}', 'xhr', 'application/json'],
+          ['GET', 'https://app.example.com/', 200, '<!doctype html>', 'document', 'text/html'],
+          ['GET', 'https://app.example.com/assets/main.a1b2.css', 200, 'body{}', 'stylesheet', 'text/css'],
+          ['GET', 'https://app.example.com/assets/vendor.9f8e.js', 200, 'void 0;', 'script', 'text/javascript'],
+          ['GET', 'https://fonts.example.com/inter-latin.woff2', 200, '', 'font', 'font/woff2'],
+          ['GET', 'https://cdn.example.com/artwork/album-4821.jpg', 200, '', 'image', 'image/jpeg'],
+          ['GET', 'https://cdn.example.com/preview/track-118.mp3', 206, '', 'media', 'audio/mpeg'],
+          ['GET', 'https://app.example.com/manifest.webmanifest', 200, '{}', 'manifest', 'application/manifest+json'],
+          ['GET', 'wss://live.example.com/jukebox/socket', 101, '', 'websocket', ''],
+          ['GET', 'https://app.example.com/decoder.wasm', 200, '', 'fetch', 'application/wasm'],
+          ['GET', 'https://beacon.example.com/collect', 204, '', 'ping', 'text/plain'],
+        ];
+        for (const args of traffic) net._emit(entry(...args));
 
         hits.push({
           id: `h${++hitSeq}`, tabId: INSPECTED_TAB_ID, timestamp: Date.now(),

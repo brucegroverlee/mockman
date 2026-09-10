@@ -57,6 +57,49 @@ export const COMMON_STATUSES: [number, string][] = [
   [504, 'Gateway Timeout'],
 ];
 
+/**
+ * The hit log's resource-type buckets.
+ *
+ * Deliberately the same set, order and wording as Chrome's own Network panel
+ * filter bar — this sits directly below it in the same window, and inventing a
+ * different taxonomy for the same requests would be a small cruelty.
+ */
+export type LogCategory =
+  | 'fetch-xhr'
+  | 'doc'
+  | 'css'
+  | 'js'
+  | 'font'
+  | 'img'
+  | 'media'
+  | 'manifest'
+  | 'socket'
+  | 'wasm'
+  | 'other';
+
+export const LOG_CATEGORIES: { id: LogCategory; label: string }[] = [
+  { id: 'fetch-xhr', label: 'Fetch/XHR' },
+  { id: 'doc', label: 'Doc' },
+  { id: 'css', label: 'CSS' },
+  { id: 'js', label: 'JS' },
+  { id: 'font', label: 'Font' },
+  { id: 'img', label: 'Img' },
+  { id: 'media', label: 'Media' },
+  { id: 'manifest', label: 'Manifest' },
+  { id: 'socket', label: 'Socket' },
+  { id: 'wasm', label: 'Wasm' },
+  { id: 'other', label: 'Other' },
+];
+
+/**
+ * The only bucket this extension can mock.
+ *
+ * `fetch`, `XMLHttpRequest` and `EventSource` are the three APIs the interceptor
+ * patches, so it is also the sensible default filter: everything else in the log
+ * is page furniture you cannot act on from here.
+ */
+export const DEFAULT_LOG_CATEGORY: LogCategory = 'fetch-xhr';
+
 export function statusClass(status: number): string {
   if (status >= 500) return 's-5xx';
   if (status >= 400) return 's-4xx';

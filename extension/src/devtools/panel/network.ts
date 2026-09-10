@@ -19,6 +19,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { HitRecord } from '@network-mock/shared';
 
 import { useMockedHits } from './messaging.ts';
+import type { LogCategory } from './labels.ts';
 
 /** How many real requests to keep. Old ones fall off the top. */
 const KEEP = 200;
@@ -30,6 +31,7 @@ export interface PassedEntry {
   method: string;
   url: string;
   status: number;
+  category: LogCategory;
   responseHeaders: Record<string, string>;
   /** Callback-only in the DevTools API, so it stays lazy until "mock it". */
   getBody: () => Promise<string>;
@@ -42,6 +44,7 @@ export interface MockedEntry {
   method: string;
   url: string;
   status: number | undefined;
+  category: LogCategory;
   mockId: string | undefined;
   path: string | undefined;
   label: string | undefined;
@@ -55,6 +58,55 @@ function headerMap(headers: chrome.devtools.network.Request['response']['headers
     if (header.name) out[header.name] = header.value ?? '';
   }
   return out;
+}
+
+/** Chrome's `_resourceType` HAR extension, lowercased, mapped to our buckets. */
+const RESOURCE_TYPES: Record<string, LogCategory> = {
+  xhr: 'fetch-xhr',
+  fetch: 'fetch-xhr',
+  document: 'doc',
+  stylesheet: 'css',
+  script: 'js',
+  font: 'font',
+  image: 'img',
+  media: 'media',
+  manifest: 'manifest',
+  websocket: 'socket',
+  wasm: 'wasm',
+};
+
+/**
+ * Which filter bucket a real request belongs to.
+ *
+ * `_resourceType` is Chrome's own HAR extension and is authoritative when
+ * present. The mime-type fallback covers entries Chrome leaves untagged; it is
+ * a heuristic, and anything it cannot place lands in "Other" rather than being
+ * guessed into a bucket where it would be surprising to find.
+ */
+export function classifyEntry(entry: chrome.devtools.network.Request): LogCategory {
+  const mime = (entry.response?.content?.mimeType ?? '').toLowerCase();
+
+  // Checked before the resource type: Chrome reports wasm as `script` or
+  // `fetch`, and the Network panel's own Wasm filter goes by mime type too.
+  if (mime.includes('application/wasm')) return 'wasm';
+
+  const resourceType = String(entry._resourceType ?? '').toLowerCase();
+  const known = RESOURCE_TYPES[resourceType];
+  if (known) return known;
+
+  // A type we recognise as a type, but which has no chip of its own
+  // (eventsource, ping, preflight, signedexchange, …).
+  if (resourceType) return 'other';
+
+  if (mime.startsWith('text/html')) return 'doc';
+  if (mime.startsWith('text/css')) return 'css';
+  if (mime.includes('javascript') || mime.includes('ecmascript')) return 'js';
+  if (mime.startsWith('font/') || mime.includes('font-')) return 'font';
+  if (mime.startsWith('image/')) return 'img';
+  if (mime.startsWith('audio/') || mime.startsWith('video/')) return 'media';
+  if (mime.includes('json')) return 'fetch-xhr';
+
+  return 'other';
 }
 
 /**
@@ -80,6 +132,7 @@ function useRealTraffic(): { entries: PassedEntry[]; clear: () => void } {
         method: entry.request.method,
         url: entry.request.url,
         status: entry.response.status,
+        category: classifyEntry(entry),
         responseHeaders: headerMap(entry.response.headers),
         getBody: () =>
           new Promise<string>((resolve) => {
@@ -106,6 +159,13 @@ function toMockedEntry(hit: HitRecord): MockedEntry {
     method: hit.method,
     url: hit.url,
     status: hit.status,
+    // Always Fetch/XHR, and not a guess: the interceptor patches exactly three
+    // APIs — `fetch`, `XMLHttpRequest` and `EventSource` — so anything that got
+    // mocked was an API call by construction. (EventSource is strictly its own
+    // resource type in Chrome, but burying mocked SSE under "Other" would hide
+    // it from the default filter, which is the one place you look to confirm a
+    // mock fired.)
+    category: 'fetch-xhr',
     mockId: hit.mockId,
     path: hit.path,
     label: hit.label,
