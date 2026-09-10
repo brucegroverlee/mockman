@@ -7,7 +7,7 @@
  * MCP show up here immediately, with no polling.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FromWorker, HitRecord, ToWorker, Workspace, WorkerBroadcast } from '@network-mock/shared';
 
 /** The tab this DevTools window is inspecting. */
@@ -56,16 +56,23 @@ export function useWorkspace(): {
     return () => chrome.runtime.onMessage.removeListener(listener);
   }, [reload]);
 
-  const update = useCallback(
-    async (fn: (current: Workspace) => Workspace) => {
+  // Writes are serialised. Each update re-reads the authoritative workspace from
+  // the worker, so two overlapping edits (typing quickly, or clicking while a
+  // save is in flight) would otherwise both read the same state and the second
+  // write would silently discard the first.
+  const chain = useRef<Promise<void>>(Promise.resolve());
+
+  const update = useCallback((fn: (current: Workspace) => Workspace): Promise<void> => {
+    const run = chain.current.then(async () => {
       const current = await getWorkspace();
       if (!current) return;
       const next = fn(current);
-      setWorkspace(next); // optimistic; the broadcast will confirm
+      setWorkspace(next); // optimistic; the broadcast confirms
       await putWorkspace(next);
-    },
-    [],
-  );
+    });
+    chain.current = run.catch(() => undefined);
+    return run;
+  }, []);
 
   return { workspace, update };
 }

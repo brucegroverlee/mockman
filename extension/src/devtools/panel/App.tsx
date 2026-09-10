@@ -50,7 +50,15 @@ export function App(): React.JSX.Element {
           <input
             type="checkbox"
             checked={workspace.enabled}
-            onChange={(e) => void update((w) => setEnabled(w, 'workspace', null, e.target.checked))}
+            // `next` is read synchronously on purpose. `update` awaits before it
+            // applies the change, and React restores a controlled input's DOM
+            // state as soon as the handler returns — so reading `e.target.checked`
+            // inside the async closure would see the value React just reverted to,
+            // and the toggle would appear stuck. Same everywhere below.
+            onChange={(e) => {
+              const next = e.target.checked;
+              void update((w) => setEnabled(w, 'workspace', null, next));
+            }}
           />
           <strong>Mocking {workspace.enabled ? 'on' : 'off'}</strong>
         </label>
@@ -183,7 +191,10 @@ function TagBar({ workspace, update }: { workspace: Workspace; update: Update })
             type="checkbox"
             checked={tag.enabled}
             title={tag.enabled ? 'Disable this tag everywhere' : 'Re-enable this tag'}
-            onChange={(e) => void update((w) => setEnabled(w, 'tag', tag.id, e.target.checked))}
+            onChange={(e) => {
+              const next = e.target.checked;
+              void update((w) => setEnabled(w, 'tag', tag.id, next));
+            }}
           />
           {tag.name}
           <button title="Delete tag" onClick={() => void update((w) => deleteTag(w, tag.id))}>
@@ -225,17 +236,23 @@ function GroupRow({
         <input
           type="checkbox"
           checked={group.enabled}
-          onChange={(e) => void update((w) => setEnabled(w, 'group', group.id, e.target.checked))}
+          onChange={(e) => {
+            const next = e.target.checked;
+            void update((w) => setEnabled(w, 'group', group.id, next));
+          }}
         />
         <input
           className="name"
           value={group.name}
-          onChange={(e) =>
+          onChange={(e) => {
+            // Read before awaiting, for the same reason as the checkboxes: React
+            // reverts a controlled input once the handler returns.
+            const name = e.target.value;
             void update((w) => ({
               ...w,
-              groups: w.groups.map((g) => (g.id === group.id ? { ...g, name: e.target.value } : g)),
-            }))
-          }
+              groups: w.groups.map((g) => (g.id === group.id ? { ...g, name } : g)),
+            }));
+          }}
         />
         <TagPicker
           workspace={workspace}
@@ -289,7 +306,10 @@ function GroupRow({
                 type="checkbox"
                 checked={mock.enabled}
                 onClick={(e) => e.stopPropagation()}
-                onChange={(e) => void update((w) => setEnabled(w, 'mock', mock.id, e.target.checked))}
+                onChange={(e) => {
+                  const next = e.target.checked;
+                  void update((w) => setEnabled(w, 'mock', mock.id, next));
+                }}
               />
               <span className="method">{mock.match.method}</span>
               <span className="mock-name">{mock.name}</span>

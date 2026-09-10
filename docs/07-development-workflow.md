@@ -137,3 +137,20 @@ reload cycle and no DevTools interaction.
   belongs there — a second implementation will drift.
 - **Comment the non-obvious, not the obvious.** The reason `emptyOutDir` is false, or
   why `NoInfer` is needed, is worth a line. `// increment i` is not.
+- **In the panel, read `e.target.*` synchronously.** `update()` awaits the worker
+  before applying a change, and React restores a controlled input's DOM state as soon
+  as the handler returns. So this looks right and is broken:
+
+  ```tsx
+  // WRONG — reads the value React already reverted; the toggle never changes
+  onChange={(e) => void update((w) => setEnabled(w, 'mock', id, e.target.checked))}
+  ```
+
+  ```tsx
+  // RIGHT — capture first, then await
+  onChange={(e) => { const next = e.target.checked; void update((w) => setEnabled(w, 'mock', id, next)); }}
+  ```
+
+  The failure mode is a checkbox that visibly ticks and then springs back, with no
+  error anywhere. Panel writes are also serialised through a promise chain in
+  `useWorkspace`, so overlapping edits cannot lose each other's changes.
