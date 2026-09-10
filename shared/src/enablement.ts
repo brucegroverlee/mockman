@@ -1,23 +1,23 @@
 /**
- * The three-way enable rule.
+ * The enable rule.
  *
  * A mock only fires when the master switch is on, the request's tab is targeted,
- * its group is enabled, it is itself enabled, and no tag it (or its group)
- * carries is disabled. Tags are a *veto*, which is what makes them useful: you
- * can kill an orthogonal slice of mocks with one toggle without touching the
- * groups they live in.
+ * every folder above it is enabled, it is itself enabled, and no tag carried by
+ * it or by any folder above it is disabled. Tags are a *veto*, which is what
+ * makes them useful: you can kill an orthogonal slice of mocks with one toggle
+ * without touching the folders they live in.
  *
  * Kept as pure functions so it can be unit-tested without a browser, and reused
  * by both the panel (to explain *why* a row is inert) and the compiler that
  * feeds the interceptor.
  */
 
-import type { Group, Mock, Tag, Workspace } from './types.ts';
+import type { Folder, Mock, Tag, Workspace } from './types.ts';
 
 export type InactiveReason =
   | 'workspace-disabled'
   | 'tab-not-targeted'
-  | 'group-disabled'
+  | 'folder-disabled'
   | 'mock-disabled'
   | 'tag-disabled';
 
@@ -25,6 +25,8 @@ export interface Activation {
   active: boolean;
   /** Absent when `active` is true. */
   reason?: InactiveReason;
+  /** The disabled folder responsible, when `reason === 'folder-disabled'`. */
+  disabledFolderId?: string;
   /** The disabled tag responsible, when `reason === 'tag-disabled'`. */
   vetoingTagId?: string;
 }
@@ -53,13 +55,16 @@ export function findVetoingTag(
 /**
  * Why a given mock is or is not active for `tabId`.
  *
+ * `ancestors` is the folder chain above the mock, outermost first — exactly what
+ * `walkTree` and `findNode` hand back.
+ *
  * Reasons are checked from broadest to narrowest so the explanation surfaced in
  * the UI is the most useful one: there is no point telling someone a tag is
  * disabled when the master switch is off.
  */
 export function explainMock(
   workspace: Workspace,
-  group: Group,
+  ancestors: readonly Folder[],
   mock: Mock,
   tabId: number,
   tagsById: ReadonlyMap<string, Tag> = indexTags(workspace.tags),
@@ -68,12 +73,25 @@ export function explainMock(
   if (!workspace.targetTabIds.includes(tabId)) {
     return { active: false, reason: 'tab-not-targeted' };
   }
-  if (!group.enabled) return { active: false, reason: 'group-disabled' };
+
+  // Outermost first, so the reported folder is the highest one that is off —
+  // the one you actually need to turn back on.
+  for (const folder of ancestors) {
+    if (!folder.enabled) {
+      return { active: false, reason: 'folder-disabled', disabledFolderId: folder.id };
+    }
+  }
+
   if (!mock.enabled) return { active: false, reason: 'mock-disabled' };
 
-  // A tag on the group vetoes just as hard as one on the mock itself.
-  const vetoingTagId =
-    findVetoingTag(group.tagIds, tagsById) ?? findVetoingTag(mock.tagIds, tagsById);
+  // A tag on any folder above vetoes just as hard as one on the mock itself.
+  let vetoingTagId: string | undefined;
+  for (const folder of ancestors) {
+    vetoingTagId = findVetoingTag(folder.tagIds, tagsById);
+    if (vetoingTagId !== undefined) break;
+  }
+  vetoingTagId ??= findVetoingTag(mock.tagIds, tagsById);
+
   if (vetoingTagId !== undefined) {
     return { active: false, reason: 'tag-disabled', vetoingTagId };
   }
@@ -83,10 +101,10 @@ export function explainMock(
 
 export function isMockActive(
   workspace: Workspace,
-  group: Group,
+  ancestors: readonly Folder[],
   mock: Mock,
   tabId: number,
   tagsById?: ReadonlyMap<string, Tag>,
 ): boolean {
-  return explainMock(workspace, group, mock, tabId, tagsById).active;
+  return explainMock(workspace, ancestors, mock, tabId, tagsById).active;
 }

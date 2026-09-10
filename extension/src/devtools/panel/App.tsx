@@ -1,60 +1,79 @@
-import { useMemo, useState } from 'react';
-import {
-  compilePattern,
-  createGroup,
-  createMock,
-  createTag,
-  deleteGroup,
-  deleteMock,
-  deleteTag,
-  explainMock,
-  indexTags,
-  setEnabled,
-  updateMock,
-} from '@network-mock/shared';
-import type { Group, HttpMethod, InactiveReason, Mock, Workspace } from '@network-mock/shared';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { findNode, isFolder, setEnabled } from '@network-mock/shared';
 
-import { inspectedTabId, send, useHits, useTabs, useWorkspace } from './messaging.ts';
-import { RecordedRequests } from './RecordedRequests.tsx';
+import { Detail } from './Detail.tsx';
+import { HitLog } from './HitLog.tsx';
+import { Tree } from './Tree.tsx';
+import { useBridgeStatus, useTabTargeting, useWorkspace } from './messaging.ts';
 
-const METHODS: (HttpMethod | '*')[] = ['*', 'GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'];
-
-const REASON_TEXT: Record<InactiveReason, string> = {
-  'workspace-disabled': 'Master switch is off',
-  'tab-not-targeted': 'This tab is not targeted',
-  'group-disabled': 'Its group is disabled',
-  'mock-disabled': 'This mock is disabled',
-  'tag-disabled': 'A tag on it is disabled',
-};
-
+/**
+ * The panel shell.
+ *
+ * Layout, top to bottom:
+ *
+ *   ┌ app bar ────────────────────────────────────┐  master switch, bridge dot
+ *   ├ tree ─────────────┬ detail ─────────────────┤  fills whatever is left
+ *   ├ hit log ────────────────────────────────────┤  what this tab actually did
+ *   └─────────────────────────────────────────────┘
+ *
+ * Both dividers are draggable, and both remember where you put them.
+ *
+ * The hit log's height is **explicit**, not content-derived. That is the whole
+ * point: rows arrive continuously while you work, and a log that grew with them
+ * would shrink the tree out from under you mid-edit. It stays exactly where you
+ * put it and scrolls internally.
+ *
+ * There is no tab picker anywhere: `useTabTargeting` targets the inspected tab
+ * for as long as this panel is open, and the log only ever shows that tab. The
+ * panel is scoped to the tab you opened it on, full stop.
+ */
 export function App(): React.JSX.Element {
   const { workspace, update } = useWorkspace();
-  const { hits, clear } = useHits();
-  const tabs = useTabs();
-  const [selectedMockId, setSelectedMockId] = useState<string | null>(null);
+  const bridgeConnected = useBridgeStatus();
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const shell = useRef<HTMLDivElement>(null);
+
+  useTabTargeting();
+
+  // Dragging the log's top edge upwards makes it taller, so the height is
+  // measured from the bottom of the panel. The upper clamp leaves room for the
+  // tree — a drag should never be able to hide it completely.
+  const measureLogHeight = useCallback((event: PointerEvent): number => {
+    const box = shell.current?.getBoundingClientRect();
+    if (!box) return LOG_DEFAULT;
+    const ceiling = Math.max(LOG_MIN, box.height - MIN_BODY_HEIGHT);
+    return Math.min(ceiling, Math.max(LOG_MIN, box.bottom - event.clientY));
+  }, []);
+
+  const log = useDragSize(LOG_KEY, LOG_DEFAULT, measureLogHeight);
+
+  // A selected node can vanish underneath us — deleted here, or over MCP.
+  useEffect(() => {
+    if (!workspace || !selectedId) return;
+    if (!findNode(workspace.tree, selectedId)) setSelectedId(null);
+  }, [workspace, selectedId]);
+
+  const selectedFolderId = useMemo(() => {
+    if (!workspace || !selectedId) return null;
+    const located = findNode(workspace.tree, selectedId);
+    if (!located) return null;
+    return isFolder(located.node) ? located.node.id : located.parentId;
+  }, [workspace, selectedId]);
 
   if (!workspace) return <div className="loading">Connecting to the extension…</div>;
 
-  const targeting = workspace.targetTabIds;
-  const inspectedIsTargeted = targeting.includes(inspectedTabId);
-
-  const toggleTargetTab = async (tabId: number, on: boolean): Promise<void> => {
-    const next = on ? [...new Set([...targeting, tabId])] : targeting.filter((id) => id !== tabId);
-    await send({ type: 'set-target-tabs', tabIds: next });
-  };
-
   return (
-    <div className="app">
-      <header className="bar">
-        <label className="master">
+    <div className="app" ref={shell} style={{ gridTemplateRows: `auto minmax(0, 1fr) 4px ${log.size}px` }}>
+      <header className="appbar">
+        <label className="master" title="Nothing is mocked anywhere while this is off">
           <input
             type="checkbox"
             checked={workspace.enabled}
             // `next` is read synchronously on purpose. `update` awaits before it
             // applies the change, and React restores a controlled input's DOM
-            // state as soon as the handler returns — so reading `e.target.checked`
-            // inside the async closure would see the value React just reverted to,
-            // and the toggle would appear stuck. Same everywhere below.
+            // state as soon as the handler returns — so reading
+            // `e.target.checked` inside the async closure would see the value
+            // React just reverted to, and the toggle would appear stuck.
             onChange={(e) => {
               const next = e.target.checked;
               void update((w) => setEnabled(w, 'workspace', null, next));
@@ -63,502 +82,188 @@ export function App(): React.JSX.Element {
           <strong>Mocking {workspace.enabled ? 'on' : 'off'}</strong>
         </label>
 
-        <div className="tabs-picker">
-          <span className="label">Target tabs</span>
-          <label className="chip">
-            <input
-              type="checkbox"
-              checked={inspectedIsTargeted}
-              onChange={(e) => void toggleTargetTab(inspectedTabId, e.target.checked)}
-            />
-            This tab ({inspectedTabId})
-          </label>
-          <select
-            value=""
-            onChange={(e) => {
-              if (e.target.value) void toggleTargetTab(Number(e.target.value), true);
-            }}
-          >
-            <option value="">Add another tab…</option>
-            {tabs
-              .filter((t) => t.id !== inspectedTabId && !targeting.includes(t.id))
-              .map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.title.slice(0, 60)} — {t.url.slice(0, 40)}
-                </option>
-              ))}
-          </select>
-          {targeting
-            .filter((id) => id !== inspectedTabId)
-            .map((id) => (
-              <span key={id} className="chip other">
-                Tab {id}
-                <button onClick={() => void toggleTargetTab(id, false)}>×</button>
-              </span>
-            ))}
-        </div>
+        <span className="spacer" />
+
+        <span
+          className={`bridge ${bridgeConnected ? 'up' : 'down'}`}
+          title={
+            bridgeConnected
+              ? 'Connected to the MCP server — an agent can read and edit these mocks.'
+              : 'No MCP server connected. The extension works fine on its own.'
+          }
+        >
+          MCP
+        </span>
       </header>
 
-      {!inspectedIsTargeted && (
-        <div className="warning">
-          This tab is not targeted, so nothing here is being mocked. Tick “This tab” above.
-        </div>
-      )}
-
-      <TagBar workspace={workspace} update={update} />
-
-      <div className="body">
-        <aside className="tree">
-          <button
-            className="primary"
-            onClick={() => void update((w) => createGroup(w, { name: 'New group' }).workspace)}
-          >
-            + Group
-          </button>
-
-          {[...workspace.groups]
-            .sort((a, b) => a.order - b.order)
-            .map((group) => (
-              <GroupRow
-                key={group.id}
-                group={group}
-                workspace={workspace}
-                update={update}
-                selectedMockId={selectedMockId}
-                onSelect={setSelectedMockId}
-              />
-            ))}
-
-          {workspace.groups.length === 0 && (
-            <p className="empty">No groups yet. Create one, then add a mock to it.</p>
-          )}
-        </aside>
-
-        <main className="editor">
-          <MockEditor
+      <SplitBody
+        left={
+          <Tree
             workspace={workspace}
-            mockId={selectedMockId}
             update={update}
-            onDeleted={() => setSelectedMockId(null)}
+            selectedId={selectedId}
+            onSelect={setSelectedId}
           />
-        </main>
-      </div>
-
-      <RecordedRequests update={update} onCreated={setSelectedMockId} />
-
-      <section className="hits">
-        <div className="hits-head">
-          <strong>Hit log</strong>
-          <span className="hint">
-            Mocked requests never reach the network, so they do <em>not</em> appear in the Network
-            panel. This is the only place you will see them.
-          </span>
-          <button onClick={() => void clear()}>Clear</button>
-        </div>
-        <div className="hit-rows">
-          {hits.length === 0 && <p className="empty">No requests seen yet.</p>}
-          {[...hits].reverse().map((hit) => (
-            <div key={hit.id} className={`hit ${hit.outcome}`}>
-              <span className="badge">{hit.outcome === 'mocked' ? 'MOCKED' : 'passed'}</span>
-              <span className="method">{hit.method}</span>
-              <span className="url" title={hit.url}>
-                {hit.url}
-              </span>
-              {hit.label && <span className="via">{hit.label}</span>}
-              {hit.status !== undefined && <span className="status">{hit.status}</span>}
-              <span className="tab">tab {hit.tabId}</span>
-            </div>
-          ))}
-        </div>
-      </section>
-    </div>
-  );
-}
-
-type Update = (fn: (current: Workspace) => Workspace) => Promise<void>;
-
-function TagBar({ workspace, update }: { workspace: Workspace; update: Update }): React.JSX.Element {
-  return (
-    <div className="tagbar">
-      <span className="label">Tags</span>
-      {workspace.tags.map((tag) => (
-        <span
-          key={tag.id}
-          className={`tag ${tag.enabled ? 'on' : 'off'}`}
-          style={{ borderColor: tag.color }}
-        >
-          <input
-            type="checkbox"
-            checked={tag.enabled}
-            title={tag.enabled ? 'Disable this tag everywhere' : 'Re-enable this tag'}
-            onChange={(e) => {
-              const next = e.target.checked;
-              void update((w) => setEnabled(w, 'tag', tag.id, next));
-            }}
+        }
+        right={
+          <Detail
+            workspace={workspace}
+            selectedId={selectedId}
+            update={update}
+            onSelect={setSelectedId}
           />
-          {tag.name}
-          <button title="Delete tag" onClick={() => void update((w) => deleteTag(w, tag.id))}>
-            ×
-          </button>
-        </span>
-      ))}
-      <button
-        onClick={() => {
-          const name = prompt('Tag name');
-          if (name) void update((w) => createTag(w, { name }).workspace);
-        }}
-      >
-        + Tag
-      </button>
-      <span className="hint">Disabling a tag overrides everything it is attached to.</span>
+        }
+      />
+
+      <div
+        className="log-splitter"
+        role="separator"
+        aria-orientation="horizontal"
+        title="Drag to resize the log; double-click to reset"
+        onPointerDown={log.onPointerDown}
+        onDoubleClick={log.reset}
+      />
+
+      <HitLog
+        workspace={workspace}
+        update={update}
+        targetFolderId={selectedFolderId}
+        onCreated={setSelectedId}
+      />
     </div>
   );
 }
 
-function GroupRow({
-  group,
-  workspace,
-  update,
-  selectedMockId,
-  onSelect,
-}: {
-  group: Group;
-  workspace: Workspace;
-  update: Update;
-  selectedMockId: string | null;
-  onSelect: (id: string) => void;
-}): React.JSX.Element {
-  const tagsById = useMemo(() => indexTags(workspace.tags), [workspace.tags]);
+/** Pane sizes in a DevTools panel are personal; remember the last ones. */
+const WIDTH_KEY = 'network-mock:tree-width';
+const WIDTH_DEFAULT = 260;
+const MIN_WIDTH = 160;
+const MAX_WIDTH = 640;
 
-  return (
-    <div className="group">
-      <div className="group-head">
-        <input
-          type="checkbox"
-          checked={group.enabled}
-          onChange={(e) => {
-            const next = e.target.checked;
-            void update((w) => setEnabled(w, 'group', group.id, next));
-          }}
-        />
-        <input
-          className="name"
-          value={group.name}
-          onChange={(e) => {
-            // Read before awaiting, for the same reason as the checkboxes: React
-            // reverts a controlled input once the handler returns.
-            const name = e.target.value;
-            void update((w) => ({
-              ...w,
-              groups: w.groups.map((g) => (g.id === group.id ? { ...g, name } : g)),
-            }));
-          }}
-        />
-        <TagPicker
-          workspace={workspace}
-          selected={group.tagIds}
-          onChange={(tagIds) =>
-            void update((w) => ({
-              ...w,
-              groups: w.groups.map((g) => (g.id === group.id ? { ...g, tagIds } : g)),
-            }))
-          }
-        />
-        <button
-          title="Add a mock to this group"
-          onClick={() =>
-            void update((w) => {
-              const result = createMock(w, group.id, {
-                name: 'New mock',
-                match: { method: 'GET', urlPattern: '*/api/*', patternKind: 'glob' },
-                response: {
-                  status: 200,
-                  headers: {},
-                  body: '{\n  "mocked": true\n}',
-                  bodyKind: 'json',
-                },
-              });
-              onSelect(result.mock.id);
-              return result.workspace;
-            })
-          }
-        >
-          + Mock
-        </button>
-        <button title="Delete group" onClick={() => void update((w) => deleteGroup(w, group.id))}>
-          ×
-        </button>
-      </div>
+const LOG_KEY = 'network-mock:log-height';
+const LOG_DEFAULT = 160;
+const LOG_MIN = 56;
+/** Never let the log squeeze the tree and editor below this. */
+const MIN_BODY_HEIGHT = 140;
 
-      {[...group.mocks]
-        .sort((a, b) => a.order - b.order)
-        .map((mock) => {
-          const activation = explainMock(workspace, group, mock, inspectedTabId, tagsById);
-          return (
-            <div
-              key={mock.id}
-              className={`mock ${activation.active ? 'active' : 'inert'} ${
-                selectedMockId === mock.id ? 'selected' : ''
-              }`}
-              onClick={() => onSelect(mock.id)}
-            >
-              <input
-                type="checkbox"
-                checked={mock.enabled}
-                onClick={(e) => e.stopPropagation()}
-                onChange={(e) => {
-                  const next = e.target.checked;
-                  void update((w) => setEnabled(w, 'mock', mock.id, next));
-                }}
-              />
-              <span className="method">{mock.match.method}</span>
-              <span className="mock-name">{mock.name}</span>
-              <span className="pattern">{mock.match.urlPattern}</span>
-              {!activation.active && activation.reason && (
-                <span className="why" title={REASON_TEXT[activation.reason]}>
-                  {REASON_TEXT[activation.reason]}
-                </span>
-              )}
-            </div>
-          );
-        })}
-    </div>
+/**
+ * A pointer-drag resizable dimension, persisted across sessions.
+ *
+ * `measure` turns a pointer position into the new size and owns all clamping —
+ * the two callers clamp against different things (a fixed maximum, and the
+ * panel's own height), so there is no single rule to hoist in here.
+ */
+function useDragSize(
+  storageKey: string,
+  fallback: number,
+  measure: (event: PointerEvent) => number,
+): {
+  size: number;
+  onPointerDown: (event: React.PointerEvent<HTMLDivElement>) => void;
+  reset: () => void;
+} {
+  const [size, setSize] = useState(() => {
+    const stored = Number(readStored(storageKey));
+    return Number.isFinite(stored) && stored > 0 ? stored : fallback;
+  });
+
+  // Mirrors `size` so the drag can persist the final value without reading it
+  // from inside a state updater — React may call an updater more than once
+  // (StrictMode does, in development), and a side effect in there runs twice.
+  const latest = useRef(size);
+
+  const onPointerDown = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      const handle = event.currentTarget;
+      handle.setPointerCapture(event.pointerId);
+
+      const move = (e: PointerEvent): void => {
+        const next = measure(e);
+        latest.current = next;
+        setSize(next);
+      };
+
+      const stop = (): void => {
+        handle.removeEventListener('pointermove', move);
+        handle.removeEventListener('pointerup', stop);
+        handle.removeEventListener('pointercancel', stop);
+        // Written once at the end rather than on every move, to keep the drag
+        // off the synchronous-storage path.
+        writeStored(storageKey, latest.current);
+      };
+
+      handle.addEventListener('pointermove', move);
+      handle.addEventListener('pointerup', stop);
+      handle.addEventListener('pointercancel', stop);
+    },
+    [measure, storageKey],
   );
+
+  const reset = useCallback(() => {
+    latest.current = fallback;
+    setSize(fallback);
+    writeStored(storageKey, fallback);
+  }, [fallback, storageKey]);
+
+  return { size, onPointerDown, reset };
 }
 
-function TagPicker({
-  workspace,
-  selected,
-  onChange,
-}: {
-  workspace: Workspace;
-  selected: string[];
-  onChange: (tagIds: string[]) => void;
-}): React.JSX.Element {
-  return (
-    <span className="tagpicker">
-      {workspace.tags.map((tag) => {
-        const on = selected.includes(tag.id);
-        return (
-          <button
-            key={tag.id}
-            className={`minitag ${on ? 'on' : ''}`}
-            style={on ? { background: tag.color } : undefined}
-            title={on ? `Remove tag ${tag.name}` : `Add tag ${tag.name}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              onChange(on ? selected.filter((id) => id !== tag.id) : [...selected, tag.id]);
-            }}
-          >
-            {tag.name}
-          </button>
-        );
-      })}
-    </span>
-  );
-}
-
-function MockEditor({
-  workspace,
-  mockId,
-  update,
-  onDeleted,
-}: {
-  workspace: Workspace;
-  mockId: string | null;
-  update: Update;
-  onDeleted: () => void;
-}): React.JSX.Element {
-  const [testUrl, setTestUrl] = useState('');
-
-  const found = useMemo(() => {
-    for (const group of workspace.groups) {
-      const mock = group.mocks.find((m) => m.id === mockId);
-      if (mock) return { group, mock };
-    }
+// localStorage is available in a DevTools panel, but not in every context this
+// bundle can be loaded into (the verify harness, a sandboxed frame), and the
+// accessor itself can throw. A lost pane size is not worth a blank panel.
+function readStored(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
     return null;
-  }, [workspace, mockId]);
-
-  if (!found) return <p className="empty">Select a mock to edit it.</p>;
-  const { mock } = found;
-
-  const patch = (changes: Partial<Mock>): void => {
-    void update((w) => updateMock(w, mock.id, changes));
-  };
-
-  const compiled = compilePattern(mock.match.urlPattern, mock.match.patternKind);
-  const patternValid = compiled !== null;
-  const testMatches = patternValid && testUrl ? compiled.test(testUrl) : null;
-
-  let bodyError: string | null = null;
-  if (mock.response.bodyKind === 'json' && mock.response.body.trim()) {
-    try {
-      JSON.parse(mock.response.body);
-    } catch (error) {
-      bodyError = error instanceof Error ? error.message : 'Invalid JSON';
-    }
   }
-
-  return (
-    <div className="mock-editor">
-      <div className="row">
-        <input
-          className="grow"
-          value={mock.name}
-          onChange={(e) => patch({ name: e.target.value })}
-          placeholder="Mock name"
-        />
-        <TagPicker
-          workspace={workspace}
-          selected={mock.tagIds}
-          onChange={(tagIds) => patch({ tagIds })}
-        />
-        <button
-          onClick={() => {
-            void update((w) => deleteMock(w, mock.id));
-            onDeleted();
-          }}
-        >
-          Delete
-        </button>
-      </div>
-
-      <fieldset>
-        <legend>Match</legend>
-        <div className="row">
-          <select
-            value={mock.match.method}
-            onChange={(e) =>
-              patch({ match: { ...mock.match, method: e.target.value as HttpMethod | '*' } })
-            }
-          >
-            {METHODS.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
-          </select>
-          <select
-            value={mock.match.patternKind}
-            onChange={(e) =>
-              patch({
-                match: { ...mock.match, patternKind: e.target.value as 'glob' | 'regex' },
-              })
-            }
-          >
-            <option value="glob">glob</option>
-            <option value="regex">regex</option>
-          </select>
-          <input
-            className={`grow ${patternValid ? '' : 'invalid'}`}
-            value={mock.match.urlPattern}
-            onChange={(e) => patch({ match: { ...mock.match, urlPattern: e.target.value } })}
-            placeholder="*/api/users"
-          />
-        </div>
-        {!patternValid && <p className="error">That regular expression does not compile.</p>}
-        {mock.match.patternKind === 'glob' && (
-          <p className="hint">
-            A glob is matched against the <em>whole</em> URL, so start it with <code>*</code> unless
-            you mean an exact match.
-          </p>
-        )}
-        <div className="row">
-          <input
-            className="grow"
-            value={testUrl}
-            onChange={(e) => setTestUrl(e.target.value)}
-            placeholder="Paste a URL here to test the pattern"
-          />
-          {testMatches !== null && (
-            <span className={testMatches ? 'match-yes' : 'match-no'}>
-              {testMatches ? 'matches' : 'no match'}
-            </span>
-          )}
-        </div>
-      </fieldset>
-
-      <fieldset>
-        <legend>Response</legend>
-        <div className="row">
-          <input
-            type="number"
-            value={mock.response.status}
-            onChange={(e) =>
-              patch({ response: { ...mock.response, status: Number(e.target.value) } })
-            }
-          />
-          <select
-            value={mock.response.bodyKind}
-            onChange={(e) =>
-              patch({
-                response: { ...mock.response, bodyKind: e.target.value as 'json' | 'text' },
-              })
-            }
-          >
-            <option value="json">json</option>
-            <option value="text">text</option>
-          </select>
-        </div>
-
-        <HeadersEditor
-          headers={mock.response.headers}
-          onChange={(headers) => patch({ response: { ...mock.response, headers } })}
-        />
-
-        <textarea
-          className={bodyError ? 'invalid' : ''}
-          rows={12}
-          value={mock.response.body}
-          onChange={(e) => patch({ response: { ...mock.response, body: e.target.value } })}
-        />
-        {bodyError && <p className="error">Invalid JSON: {bodyError}</p>}
-      </fieldset>
-    </div>
-  );
 }
 
-function HeadersEditor({
-  headers,
-  onChange,
+function writeStored(key: string, value: number): void {
+  try {
+    localStorage.setItem(key, String(value));
+  } catch {
+    /* ignore: the size simply will not be remembered */
+  }
+}
+
+function SplitBody({
+  left,
+  right,
 }: {
-  headers: Record<string, string>;
-  onChange: (headers: Record<string, string>) => void;
+  left: React.ReactNode;
+  right: React.ReactNode;
 }): React.JSX.Element {
-  const entries = Object.entries(headers);
+  const container = useRef<HTMLDivElement>(null);
+
+  const measureWidth = useCallback((event: PointerEvent): number => {
+    const box = container.current?.getBoundingClientRect();
+    if (!box) return WIDTH_DEFAULT;
+    return Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, event.clientX - box.left));
+  }, []);
+
+  const tree = useDragSize(WIDTH_KEY, WIDTH_DEFAULT, measureWidth);
 
   return (
-    <div className="headers">
-      {entries.map(([key, value], index) => (
-        <div className="row" key={`${key}-${index}`}>
-          <input
-            value={key}
-            placeholder="Header"
-            onChange={(e) => {
-              const next = Object.fromEntries(
-                entries.map(([k, v], i) => (i === index ? [e.target.value, v] : [k, v])),
-              );
-              onChange(next);
-            }}
-          />
-          <input
-            className="grow"
-            value={value}
-            placeholder="Value"
-            onChange={(e) => onChange({ ...headers, [key]: e.target.value })}
-          />
-          <button
-            onClick={() => {
-              const next = { ...headers };
-              delete next[key];
-              onChange(next);
-            }}
-          >
-            ×
-          </button>
-        </div>
-      ))}
-      <button onClick={() => onChange({ ...headers, '': '' })}>+ Header</button>
+    // `minmax(0, 1fr)` rather than `1fr`: a plain fr track's automatic minimum
+    // is min-content, so one long unwrappable string in the detail pane would
+    // widen the track and make the whole panel scroll sideways.
+    <div
+      className="body"
+      ref={container}
+      style={{ gridTemplateColumns: `${tree.size}px 4px minmax(0, 1fr)` }}
+    >
+      {left}
+      <div
+        className="splitter"
+        role="separator"
+        aria-orientation="vertical"
+        title="Drag to resize; double-click to reset"
+        onPointerDown={tree.onPointerDown}
+        onDoubleClick={tree.reset}
+      />
+      {right}
     </div>
   );
 }

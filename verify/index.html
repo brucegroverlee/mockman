@@ -13,16 +13,17 @@
 
     <script>
       // Stand in for the ISOLATED-world relay: hand the interceptor its config.
+      // This is the CompiledMock shape from shared/src/types.ts.
       const mock = (over) => ({
         mockId: 'm1',
-        groupId: 'g1',
-        label: 'test / m1',
+        path: 'test / m1',
         match: { method: 'GET', urlPattern: '*/api/users*', patternKind: 'glob' },
         response: {
           status: 200,
           headers: { 'x-mocked-by': 'network-mock' },
           body: '{"mocked":true}',
           bodyKind: 'json',
+          delayMs: 0,
         },
         ...over,
       });
@@ -33,26 +34,78 @@
           mock({}),
           mock({
             mockId: 'm2',
-            label: 'test / teapot',
+            path: 'test / teapot',
             match: { method: 'GET', urlPattern: '*/api/teapot', patternKind: 'glob' },
-            response: { status: 418, headers: {}, body: 'short and stout', bodyKind: 'text' },
+            response: { status: 418, headers: {}, body: 'short and stout', bodyKind: 'text', delayMs: 0 },
           }),
           mock({
             mockId: 'm3',
-            label: 'test / xhr',
+            path: 'test / xhr',
             match: { method: 'GET', urlPattern: '*/api/xhr-mocked', patternKind: 'glob' },
             response: {
               status: 200,
               headers: { 'x-via': 'xhr-mock' },
               body: '{"xhr":"mocked"}',
               bodyKind: 'json',
+              delayMs: 0,
             },
           }),
           mock({
             mockId: 'm4',
-            label: 'test / post-only',
+            path: 'test / post-only',
             match: { method: 'POST', urlPattern: '*/api/method-test', patternKind: 'glob' },
-            response: { status: 200, headers: {}, body: '{"post":true}', bodyKind: 'json' },
+            response: { status: 200, headers: {}, body: '{"post":true}', bodyKind: 'json', delayMs: 0 },
+          }),
+
+          // --- v2: artificial latency ---
+          mock({
+            mockId: 'm5',
+            path: 'test / slow',
+            match: { method: 'GET', urlPattern: '*/api/slow', patternKind: 'glob' },
+            response: { status: 200, headers: {}, body: '{"slow":true}', bodyKind: 'json', delayMs: 250 },
+          }),
+
+          // --- v2: request-body matching ---
+          // Narrow first, catch-all second: first-match-wins means the order of
+          // these two IS the behaviour being tested.
+          mock({
+            mockId: 'm6',
+            path: 'test / body-save',
+            match: {
+              method: 'POST',
+              urlPattern: '*/api/body-test',
+              patternKind: 'glob',
+              body: { mode: 'json-subset', value: '{"action":"save"}' },
+            },
+            response: { status: 200, headers: {}, body: '{"matched":"save"}', bodyKind: 'json', delayMs: 0 },
+          }),
+          mock({
+            mockId: 'm7',
+            path: 'test / body-any',
+            match: { method: 'POST', urlPattern: '*/api/body-test', patternKind: 'glob' },
+            response: { status: 200, headers: {}, body: '{"matched":"any"}', bodyKind: 'json', delayMs: 0 },
+          }),
+          // --- a status the Response constructor cannot build ---
+          // Reachable from the panel (an emptied status field once yielded 0)
+          // and from MCP/import (1xx passes every schema). It must fall back to
+          // the network, not reject the page's fetch.
+          mock({
+            mockId: 'm9',
+            path: 'test / bad-status',
+            match: { method: 'GET', urlPattern: '*/api/bad-status', patternKind: 'glob' },
+            response: { status: 0, headers: {}, body: 'never delivered', bodyKind: 'text', delayMs: 0 },
+          }),
+
+          mock({
+            mockId: 'm8',
+            path: 'test / body-required',
+            match: {
+              method: 'POST',
+              urlPattern: '*/api/body-required',
+              patternKind: 'glob',
+              body: { mode: 'contains', value: 'needle' },
+            },
+            response: { status: 200, headers: {}, body: '{"matched":true}', bodyKind: 'json', delayMs: 0 },
           }),
         ],
       };
@@ -144,11 +197,94 @@
         check('xhr passthrough: real status 201', x2.status === 201, x2.status);
         check('xhr passthrough: real body', x2.responseText.includes('xhrReal'), x2.responseText);
 
+        // --- delayMs ---
+        const t0 = performance.now();
+        const r5 = await fetch('/api/slow');
+        const elapsed = performance.now() - t0;
+        check('delay: response still correct', (await r5.json()).slow === true);
+        // Generous lower bound: setTimeout only guarantees "at least".
+        check('delay: waited ~250ms before responding', elapsed >= 200, Math.round(elapsed) + 'ms');
+
+        // --- a mock that cannot be built must fail OPEN ---
+        // The Response constructor rejects any status outside 200-599. If that
+        // RangeError escaped, the page's own fetch would reject — so this must
+        // reach the network (404 here) rather than throw.
+        let badStatusThrew = null;
+        let r6 = null;
+        try {
+          r6 = await fetch('/api/bad-status');
+        } catch (error) {
+          badStatusThrew = String(error);
+        }
+        check('unbuildable response: does not reject the page fetch', badStatusThrew === null, badStatusThrew);
+        check('unbuildable response: falls through to the network', r6 && r6.status === 404, r6 && r6.status);
+        check(
+          'unbuildable response: logged as passed, not mocked',
+          !hits.some((h) => h.url.includes('/api/bad-status') && h.outcome === 'mocked'),
+          JSON.stringify(hits.filter((h) => h.url.includes('/api/bad-status'))),
+        );
+
+        // --- request body matching ---
+        const post = async (url, body) => {
+          const r = await fetch(url, { method: 'POST', body });
+          return { status: r.status, text: await r.text() };
+        };
+
+        const bodySave = await post('/api/body-test', '{"action":"save","ts":123}');
+        check(
+          'body match: json-subset wins over the catch-all',
+          JSON.parse(bodySave.text).matched === 'save',
+          bodySave.text,
+        );
+
+        const bodyOther = await post('/api/body-test', '{"action":"delete"}');
+        check(
+          'body match: non-matching body falls through to the catch-all',
+          JSON.parse(bodyOther.text).matched === 'any',
+          bodyOther.text,
+        );
+
+        const bodyHit = await post('/api/body-required', 'a needle in there');
+        check('body match: contains matches', JSON.parse(bodyHit.text).matched === true, bodyHit.text);
+
+        const bodyMiss = await post('/api/body-required', 'nothing here');
+        check(
+          'body match: non-matching body reaches the network',
+          bodyMiss.status === 404,
+          bodyMiss.status,
+        );
+
+        // An unreadable body must NOT satisfy a body matcher — otherwise a
+        // narrow mock would quietly behave like a catch-all.
+        const unreadable = await fetch('/api/body-required', {
+          method: 'POST',
+          body: new Blob(['needle']),
+        });
+        check(
+          'body match: an unreadable body fails closed',
+          unreadable.status === 404,
+          unreadable.status,
+        );
+
+        // XHR bodies are readable synchronously, so they must match.
+        const xhrBody = await new Promise((resolve) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('POST', '/api/body-required');
+          xhr.onloadend = () => resolve({ status: xhr.status, text: xhr.responseText });
+          xhr.send('a needle in there');
+        });
+        check('body match: works for XHR too', xhrBody.status === 200, JSON.stringify(xhrBody));
+
         // --- hit reporting ---
         check(
           'hits reported for mocked requests',
           hits.some((h) => h.outcome === 'mocked' && h.url.includes('/api/users')),
           JSON.stringify(hits.filter((h) => h.outcome === 'mocked').map((h) => h.url)),
+        );
+        check(
+          'hits carry the mock breadcrumb path',
+          hits.some((h) => h.outcome === 'mocked' && h.path === 'test / m1'),
+          JSON.stringify(hits.filter((h) => h.outcome === 'mocked').map((h) => h.path)),
         );
         check(
           'hits reported for passed requests',

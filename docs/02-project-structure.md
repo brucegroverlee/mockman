@@ -92,7 +92,15 @@ extension/
    └─ devtools/
       ├─ devtools.html/.ts   # registers the panel
       ├─ panel.html
-      └─ panel/              # the React UI
+      └─ panel/
+         ├─ App.tsx          # shell: app bar, resizable split, hit log
+         ├─ Tree.tsx         # the folder/mock explorer, search and drag-drop
+         ├─ Detail.tsx       # breadcrumb, name, url, the three payload tabs
+         ├─ HitLog.tsx       # what the tab did, and the "mock it" capture
+         ├─ CodeEditor.tsx   # line-numbered textarea
+         ├─ messaging.ts     # worker messaging + the React hooks
+         ├─ network.ts       # merges devtools.network with the mocked-hit stream
+         └─ labels.ts        # strings shared across components
 ```
 
 If you read only one file, read `src/injected/intercept.ts` — it is where the

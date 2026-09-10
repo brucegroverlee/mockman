@@ -1,12 +1,13 @@
 # Network Mock
 
-A Chrome DevTools extension for mocking network responses — with **groups**, **tags**,
-independent enable/disable at every level, explicit **per-tab targeting**, and **MCP
-access** so AI agents can drive every feature.
+A Chrome DevTools extension for mocking network responses — with a **nested folder
+tree**, **tags**, independent enable/disable at every level, **request-body matching**,
+**artificial latency**, automatic **per-tab scoping**, and **MCP access** so AI agents
+can drive every feature.
 
-Built because DevTools' own Local Overrides has none of that: no grouping, no tagging,
-no way to switch a slice of mocks on and off, no tab scoping, and no programmatic
-access.
+Built because DevTools' own Local Overrides has none of that: no organisation, no
+tagging, no way to switch a slice of mocks on and off, no tab scoping, and no
+programmatic access.
 
 ## Quickstart
 
@@ -17,8 +18,10 @@ pnpm install; pnpm build
 1. `chrome://extensions` → enable **Developer mode** → **Load unpacked** →
    select `extension/dist`.
 2. Open a page, press **F12**, choose the **Network Mock** tab.
-3. Tick **This tab** — nothing is mocked until you do.
-4. **+ Group**, then **+ Mock**. Set a pattern like `*/api/*`.
+3. That tab is now mocked, for as long as the panel stays open.
+4. Add a folder and a mock with the toolbar buttons, and set a pattern like `*/api/*`.
+   Or hit **mock it** on any row in the log at the bottom to capture a real request,
+   response and all.
 
 No Node installed? You only need pnpm — see
 [docs/01-windows-setup.md](docs/01-windows-setup.md). The repo pins its own Node
@@ -36,12 +39,14 @@ is already committed for Claude Code.
 
 Full tool reference: [docs/06-mcp.md](docs/06-mcp.md).
 
-## Two things that will surprise you
+## Three things that will surprise you
 
 - **Mocked requests do not appear in the DevTools Network panel.** They never reach
   the network, so Chrome has nothing to display. Use the panel's **Hit log**.
 - **Globs are anchored to the whole URL.** `*/api/users`, not `/api/users`. The panel
   has a live pattern tester for this.
+- **A tab is mocked only while its panel is open.** There is no tab picker: opening
+  the panel on a tab is how you choose it, and closing it stops the mocking.
 
 ## Documentation
 
@@ -63,7 +68,8 @@ Chrome extensions and MCP alike.
 ## Layout
 
 ```
-shared/       data model, matcher, enablement rules, mutations  (used by both sides)
+shared/       data model, tree, matcher, enablement, mutations, search, migration
+              (used verbatim by both sides)
 extension/    the MV3 extension: panel, service worker, interception
 mcp-server/   vendor-neutral MCP server + WebSocket bridge
 docs/         the above

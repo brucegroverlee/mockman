@@ -24,16 +24,20 @@
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| **Nothing is mocked at all** | The tab is not targeted. Nothing is mocked until you say so | Tick **This tab** in the panel header |
-| A mock looks enabled but does not fire | A **tag** on it — or on its group — is disabled, which vetoes it | The greyed row states the reason. Or call `get_status` |
+| **Nothing is mocked at all** | A tab is targeted only while its Network Mock panel is open | Open the panel on the tab you are testing, and leave it open. Check the **Mocking on** switch too |
+| Nothing is mocked *from an agent* | Same cause: with no panel open, no tab is targeted | Open the panel, or call `set_target_tabs` explicitly |
+| A mock looks enabled but does not fire | A **tag** on it — or on a folder above it — is disabled, which vetoes it | The greyed row shows a `!`; hover it, or call `get_status` |
+| A whole branch went inert at once | A folder above it is disabled, or carries a disabled tag | The breadcrumb in the detail pane strikes through any disabled folder |
 | Glob does not match | Globs are anchored to the **whole** URL | `*/api/users`, not `/api/users`. Use the panel's pattern tester |
 | Mocked request missing from the **Network** panel | **Expected.** A mocked request never reaches the network, so there is nothing for Chrome to show | Use the panel's **Hit log**, or `get_hit_log`. See [05](05-interception.md) |
-| The wrong mock fires | First-match-wins by group order then mock order | Reorder so specific mocks precede catch-alls (`reorder_groups`) |
+| The wrong mock fires | First-match-wins in depth-first tree order | Drag the specific mock above the catch-all, or call `reorder_children` |
+| A mock with a **Request payload** condition never fires | The request body could not be read — a `Blob`, `FormData` or stream body never satisfies a body matcher | Match on URL and method instead. See [05](05-interception.md#matching-on-the-request-body) |
+| `Delay by (ms)` seems ignored | Synchronous XHR cannot be delayed — the caller is blocked on `send()` | Expected; use async XHR or `fetch` |
 | Images / CSS / page navigation not mocked | Only `fetch`, XHR and `EventSource` are patched | A real limitation — see [05](05-interception.md#limitations-stated-plainly) |
 | A site ignores mocks entirely | Its own service worker is making the requests, in a context we do not inject into | Unregister the site's service worker in Application → Service Workers |
 | Every request stalls ~2 seconds, then works unmocked | The relay never delivered config, so the fail-open timeout is firing each load | Check the service worker console for errors; reload the extension |
 | Sync XHR is not mocked | A synchronous XHR cannot wait for config to arrive | Known limitation; use async XHR or `fetch` |
-| Mocks vanished after restarting Chrome | Mocks persist, but **tab targeting does not** — tab ids are session-scoped | Re-tick the target tab |
+| Mocks vanished after restarting Chrome | Mocks persist, but **tab targeting does not** — tab ids are session-scoped | Reopen the panel on the tab; that re-targets it |
 
 ## MCP
 

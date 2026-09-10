@@ -8,10 +8,20 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { FromWorker, HitRecord, ToWorker, Workspace, WorkerBroadcast } from '@network-mock/shared';
+import { PANEL_PORT } from '@network-mock/shared';
+import type {
+  FromWorker,
+  HitRecord,
+  PanelHello,
+  ToWorker,
+  Workspace,
+  WorkerBroadcast,
+} from '@network-mock/shared';
 
-/** The tab this DevTools window is inspecting. */
+/** The tab this DevTools window is inspecting. Everything here is scoped to it. */
 export const inspectedTabId = chrome.devtools.inspectedWindow.tabId;
+
+export type Update = (fn: (current: Workspace) => Workspace) => Promise<void>;
 
 export async function send(message: ToWorker): Promise<FromWorker> {
   try {
@@ -31,30 +41,65 @@ export async function putWorkspace(workspace: Workspace): Promise<void> {
 }
 
 /**
+ * Holds the inspected tab in the worker's target set for as long as this panel
+ * is open, so mocking needs no tab picker at all.
+ *
+ * The port is what carries the lifetime; see the `onConnect` handler in the
+ * service worker. Reconnecting on disconnect matters because MV3 tears the
+ * worker down when idle, and an evicted worker takes the port with it.
+ */
+export function useTabTargeting(): void {
+  useEffect(() => {
+    let closed = false;
+    let port: chrome.runtime.Port | null = null;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+
+    const open = (): void => {
+      if (closed) return;
+      try {
+        port = chrome.runtime.connect({ name: PANEL_PORT });
+      } catch {
+        // The extension is reloading (constant during development). Try again.
+        retry = setTimeout(open, 1000);
+        return;
+      }
+
+      const hello: PanelHello = { type: 'panel-hello', tabId: inspectedTabId };
+      port.postMessage(hello);
+      port.onDisconnect.addListener(() => {
+        port = null;
+        if (!closed) retry = setTimeout(open, 1000);
+      });
+    };
+
+    open();
+
+    return () => {
+      closed = true;
+      clearTimeout(retry);
+      port?.disconnect();
+    };
+  }, []);
+}
+
+/**
  * The workspace plus a setter that writes through to the worker.
  *
  * `update` takes a function so callers compose the pure mutation helpers from
  * `@network-mock/shared` without worrying about staleness.
  */
-export function useWorkspace(): {
-  workspace: Workspace | null;
-  update: (fn: (current: Workspace) => Workspace) => Promise<void>;
-} {
+export function useWorkspace(): { workspace: Workspace | null; update: Update } {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
 
-  const reload = useCallback(async () => {
-    setWorkspace(await getWorkspace());
-  }, []);
-
   useEffect(() => {
-    void reload();
+    void (async () => setWorkspace(await getWorkspace()))();
 
     const listener = (message: WorkerBroadcast): void => {
       if (message?.type === 'workspace-changed') setWorkspace(message.workspace);
     };
     chrome.runtime.onMessage.addListener(listener);
     return () => chrome.runtime.onMessage.removeListener(listener);
-  }, [reload]);
+  }, []);
 
   // Writes are serialised. Each update re-reads the authoritative workspace from
   // the worker, so two overlapping edits (typing quickly, or clicking while a
@@ -67,6 +112,7 @@ export function useWorkspace(): {
       const current = await getWorkspace();
       if (!current) return;
       const next = fn(current);
+      if (next === current) return;
       setWorkspace(next); // optimistic; the broadcast confirms
       await putWorkspace(next);
     });
@@ -77,53 +123,53 @@ export function useWorkspace(): {
   return { workspace, update };
 }
 
-/** Live hit log, seeded from the worker's buffer then appended to via broadcast. */
-export function useHits(limit = 200): { hits: HitRecord[]; clear: () => Promise<void> } {
+/**
+ * Mocked requests seen on the inspected tab.
+ *
+ * Only `mocked` outcomes are kept. Requests that passed through reached the real
+ * network, so `chrome.devtools.network` already knows about them in far more
+ * detail (including the response body, which is what makes "mock it" useful) —
+ * see useNetworkLog. Taking passed rows from both sources would just duplicate
+ * every one of them.
+ */
+export function useMockedHits(limit = 200): { hits: HitRecord[]; clear: () => Promise<void> } {
   const [hits, setHits] = useState<HitRecord[]>([]);
 
   useEffect(() => {
     void (async () => {
-      const reply = await send({ type: 'get-hits', limit });
-      if (reply.type === 'hits') setHits(reply.hits);
+      const reply = await send({ type: 'get-hits', tabId: inspectedTabId, limit });
+      if (reply.type === 'hits') setHits(reply.hits.filter((hit) => hit.outcome === 'mocked'));
     })();
 
     const listener = (message: WorkerBroadcast): void => {
-      if (message?.type === 'hit') {
-        setHits((previous) => [...previous, message.hit].slice(-limit));
-      }
+      if (message?.type !== 'hit') return;
+      const { hit } = message;
+      if (hit.tabId !== inspectedTabId || hit.outcome !== 'mocked') return;
+      setHits((previous) => [...previous, hit].slice(-limit));
     };
     chrome.runtime.onMessage.addListener(listener);
     return () => chrome.runtime.onMessage.removeListener(listener);
   }, [limit]);
 
   const clear = useCallback(async () => {
-    await send({ type: 'clear-hits' });
+    await send({ type: 'clear-hits', tabId: inspectedTabId });
     setHits([]);
   }, []);
 
   return { hits, clear };
 }
 
-export interface TabOption {
-  id: number;
-  title: string;
-  url: string;
-}
-
-/** Every tab that could be targeted, for the picker. */
-export function useTabs(): TabOption[] {
-  const [tabs, setTabs] = useState<TabOption[]>([]);
+/** Whether the MCP bridge is currently connected, for the status dot. */
+export function useBridgeStatus(): boolean {
+  const [connected, setConnected] = useState(false);
 
   useEffect(() => {
-    void (async () => {
-      const all = await chrome.tabs.query({});
-      setTabs(
-        all
-          .filter((tab): tab is chrome.tabs.Tab & { id: number } => tab.id !== undefined)
-          .map((tab) => ({ id: tab.id, title: tab.title ?? '(untitled)', url: tab.url ?? '' })),
-      );
-    })();
+    const listener = (message: WorkerBroadcast): void => {
+      if (message?.type === 'bridge-status') setConnected(message.connected);
+    };
+    chrome.runtime.onMessage.addListener(listener);
+    return () => chrome.runtime.onMessage.removeListener(listener);
   }, []);
 
-  return tabs;
+  return connected;
 }

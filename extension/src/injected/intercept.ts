@@ -15,6 +15,9 @@
  *    deliver asynchronously anyway.
  *  - **It must fail open.** If the relay never answers, a timeout releases every
  *    waiter into passthrough. A broken extension must never hang a page.
+ *  - **Reading a request body must not consume it.** A `Request` or a stream can
+ *    only be read once, so `readRequestBody` never touches anything it cannot
+ *    read from a clone — see the comment there.
  */
 
 import { PAGE_EVENT, resolveCompiled } from '@network-mock/shared';
@@ -75,20 +78,88 @@ function findMock(request: MockRequestInfo): CompiledMock | null {
   return resolveCompiled(config.mocks, request);
 }
 
+/** True when any live mock actually cares about request bodies. */
+function anyMockNeedsBody(): boolean {
+  return config.active && config.mocks.some((mock) => mock.match.body?.value);
+}
+
+/**
+ * Best-effort text of an outgoing body, or `undefined` when it is unreadable.
+ *
+ * `undefined` is meaningful downstream: a mock with a body matcher never
+ * matches an unreadable body, so we must not conflate it with `''`.
+ *
+ * Only types that can be read *without* consuming the original are handled. A
+ * `ReadableStream` body is deliberately left unread — draining it would break
+ * the very request we are about to let through — and a `Blob`/`FormData` needs
+ * an await that would change fetch's timing for every caller, mocked or not.
+ */
+function readRequestBody(body: unknown): string | undefined {
+  if (body === null || body === undefined) return undefined;
+  if (typeof body === 'string') return body;
+  if (typeof URLSearchParams !== 'undefined' && body instanceof URLSearchParams) {
+    return body.toString();
+  }
+  if (typeof ArrayBuffer !== 'undefined' && ArrayBuffer.isView(body)) {
+    try {
+      return new TextDecoder().decode(body as ArrayBufferView);
+    } catch {
+      return undefined;
+    }
+  }
+  if (body instanceof ArrayBuffer) {
+    try {
+      return new TextDecoder().decode(body);
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The body of a `Request` object, read from a clone so the original stays usable.
+ *
+ * Only called when a body matcher exists — cloning and buffering every request
+ * would be a real cost to impose on pages that never asked for it.
+ */
+async function readRequestObjectBody(request: Request): Promise<string | undefined> {
+  // No body at all is "unreadable", not "empty" — `undefined` and `''` mean
+  // different things to a body matcher. `bodyUsed` would make clone() throw.
+  if (!request.body || request.bodyUsed) return undefined;
+  try {
+    return await request.clone().text();
+  } catch {
+    return undefined;
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Artificial latency, if the mock asked for any. */
+async function applyDelay(mock: CompiledMock): Promise<void> {
+  const delay = mock.response.delayMs;
+  if (delay > 0) await sleep(delay);
+}
+
 function reportPassed(method: string, url: string): void {
   report({ timestamp: Date.now(), method, url, outcome: 'passed' });
 }
 
 function reportMocked(method: string, url: string, mock: CompiledMock): void {
-  report({
+  const hit: Omit<HitRecord, 'id' | 'tabId'> = {
     timestamp: Date.now(),
     method,
     url,
     outcome: 'mocked',
     mockId: mock.mockId,
-    label: mock.label,
+    path: mock.path,
     status: mock.response.status,
-  });
+  };
+  if (mock.label) hit.label = mock.label;
+  report(hit);
 }
 
 const STATUS_TEXT: Record<number, string> = {
@@ -132,16 +203,35 @@ function forbidsBody(status: number): boolean {
 
 const originalFetch = window.fetch;
 
-function buildResponse(mock: CompiledMock, url: string): Response {
-  const headers = new Headers(mock.response.headers);
-  if (!headers.has('content-type')) headers.set('content-type', defaultContentType(mock));
+/**
+ * Builds the mocked `Response`, or null if it cannot be built.
+ *
+ * Returning null rather than throwing is the fail-open rule applied here. The
+ * `Response` constructor rejects any status outside 200–599 with a RangeError,
+ * and such a status is reachable: the panel's number input yields 0 for an
+ * emptied field, and 1xx passes both the MCP schema and `migrateWorkspace`. An
+ * exception escaping here would reject the page's own `fetch` — turning a
+ * mis-typed status into a page-breaking error, which is precisely what this file
+ * promises never to do. A null sends the request to the real network instead.
+ *
+ * Header values can be rejected too (a stray newline), so the whole construction
+ * is guarded, not just the status.
+ */
+function buildResponse(mock: CompiledMock, url: string): Response | null {
+  let response: Response;
+  try {
+    const headers = new Headers(mock.response.headers);
+    if (!headers.has('content-type')) headers.set('content-type', defaultContentType(mock));
 
-  const body = forbidsBody(mock.response.status) ? null : mock.response.body;
-  const response = new Response(body, {
-    status: mock.response.status,
-    statusText: statusTextFor(mock),
-    headers,
-  });
+    const body = forbidsBody(mock.response.status) ? null : mock.response.body;
+    response = new Response(body, {
+      status: mock.response.status,
+      statusText: statusTextFor(mock),
+      headers,
+    });
+  } catch {
+    return null;
+  }
 
   // `Response.url` is read-only and defaults to '' for a synthesised response.
   // Consumers that read it (or check `redirected`) should see something sane.
@@ -178,14 +268,29 @@ window.fetch = async function patchedFetch(
 
   await ready;
 
-  const mock = findMock({ method, url });
-  if (!mock) {
+  // Reading the body costs a clone and an await, so it only happens when some
+  // live mock actually has a body matcher. `init.body` wins over the Request's
+  // own body, matching how fetch itself resolves the two.
+  let body: string | undefined;
+  if (anyMockNeedsBody()) {
+    if (init && 'body' in init) body = readRequestBody(init.body);
+    else if (input instanceof Request) body = await readRequestObjectBody(input);
+  }
+
+  const mock = findMock({ method, url, body });
+
+  // Build before reporting: an unbuildable response is not a mocked request, and
+  // claiming otherwise in the hit log would send you hunting for a mock that
+  // never actually answered.
+  const response = mock ? buildResponse(mock, url) : null;
+  if (!mock || !response) {
     reportPassed(method, url);
     return originalFetch.call(window, input as RequestInfo, init);
   }
 
   reportMocked(method, url, mock);
-  return buildResponse(mock, url);
+  await applyDelay(mock);
+  return response;
 } as typeof window.fetch;
 
 // ---------------------------------------------------------------------------
@@ -226,22 +331,29 @@ XhrProto.send = function patchedSend(this: XMLHttpRequest, body?: Document | XML
   const state = xhrState.get(this);
   if (!state) return originalSend.call(this, body ?? null);
 
+  // Unlike fetch, XHR hands us the body synchronously and reading it consumes
+  // nothing, so there is no clone to avoid and no reason to gate on
+  // `anyMockNeedsBody`.
+  const request = { ...state, body: readRequestBody(body) };
+
   // A synchronous XHR must have its response ready when send() returns, so there
   // is no opportunity to await config. If config has not arrived yet we can only
   // pass it through; if it has, we can still mock without waiting.
   if (!state.async) {
-    const mock = settled ? findMock(state) : null;
+    const mock = settled ? findMock(request) : null;
     if (!mock) {
       reportPassed(state.method, state.url);
       return originalSend.call(this, body ?? null);
     }
     reportMocked(state.method, state.url, mock);
+    // A delay is impossible here: the caller is blocking on send() returning,
+    // and there is no way to yield without breaking that contract.
     deliverMockedXhr(this, mock, state.url, { synchronous: true });
     return;
   }
 
   void ready.then(() => {
-    const mock = findMock(state);
+    const mock = findMock(request);
     if (!mock) {
       reportPassed(state.method, state.url);
       originalSend.call(this, body ?? null);
@@ -365,9 +477,11 @@ function deliverMockedXhr(
     fireProgress('loadend');
   };
 
-  // Synchronous XHR expects everything to have happened before send() returns.
+  // Synchronous XHR expects everything to have happened before send() returns,
+  // which also rules out honouring `delayMs` — blocking the main thread for it
+  // would be worse than ignoring it.
   if (opts.synchronous) run();
-  else setTimeout(run, 0);
+  else setTimeout(run, Math.max(0, mock.response.delayMs));
 
   void bodyKind; // documented on the type; not needed beyond content-type defaulting
 }
@@ -416,6 +530,8 @@ if (typeof OriginalEventSource === 'function') {
       });
     }
 
+    // `delayMs` is applied to the connection opening, which is the closest
+    // analogue to "the server took a while to answer" for a stream.
     setTimeout(() => {
       readyState = 1; // OPEN
       target.dispatchEvent(new Event('open'));
@@ -430,7 +546,7 @@ if (typeof OriginalEventSource === 'function') {
         const data = dataLines.length > 0 ? dataLines.join('\n') : chunk;
         target.dispatchEvent(new MessageEvent('message', { data, origin: new URL(url).origin }));
       }
-    }, 0);
+    }, Math.max(0, mock.response.delayMs));
 
     return target as unknown as EventSource;
   }

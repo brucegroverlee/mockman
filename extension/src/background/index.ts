@@ -1,20 +1,27 @@
 /**
  * The service worker. Single owner of the workspace state.
  *
- * Everything else — the panel, the relays in each tab, and (later) the MCP
- * bridge — reads and mutates through here, so there is exactly one source of
- * truth and one place that broadcasts change.
+ * Everything else — the panel, the relays in each tab, and the MCP bridge —
+ * reads and mutates through here, so there is exactly one source of truth and
+ * one place that broadcasts change.
  *
  * Storage split, on purpose:
- *  - the workspace (groups/mocks/tags) goes in `chrome.storage.local`, because it
- *    should survive a browser restart;
+ *  - the workspace (the folder/mock tree and tags) goes in `chrome.storage.local`,
+ *    because it should survive a browser restart;
  *  - `targetTabIds` goes in `chrome.storage.session`, because a tab id is
  *    meaningless after a restart and silently mocking a recycled id would be a
  *    nasty surprise.
  */
 
-import { compileActiveMocks, emptyWorkspace } from '@network-mock/shared';
-import type { FromWorker, HitRecord, ToWorker, Workspace, WorkerBroadcast } from '@network-mock/shared';
+import { PANEL_PORT, compileActiveMocks, migrateWorkspace } from '@network-mock/shared';
+import type {
+  FromWorker,
+  HitRecord,
+  PanelHello,
+  ToWorker,
+  Workspace,
+  WorkerBroadcast,
+} from '@network-mock/shared';
 
 import { startBridge } from './bridge.ts';
 
@@ -26,14 +33,21 @@ const HIT_LIMIT = 500;
 let hits: HitRecord[] = [];
 let hitSeq = 0;
 
+/**
+ * Loads and normalises the stored workspace.
+ *
+ * Everything read from storage goes through `migrateWorkspace`, so a workspace
+ * written by an older build (the flat v1 group model) is upgraded on the way in
+ * rather than crashing the worker. The upgrade is written back on the next save,
+ * which every mutation performs anyway.
+ */
 async function loadWorkspace(): Promise<Workspace> {
   const [local, session] = await Promise.all([
     chrome.storage.local.get(LOCAL_KEY),
     chrome.storage.session.get(SESSION_KEY),
   ]);
 
-  const stored = local[LOCAL_KEY] as Workspace | undefined;
-  const workspace = stored ?? emptyWorkspace();
+  const workspace = migrateWorkspace(local[LOCAL_KEY]);
   workspace.targetTabIds = (session[SESSION_KEY] as number[] | undefined) ?? [];
   return workspace;
 }
@@ -71,6 +85,42 @@ function emit(message: WorkerBroadcast): void {
   chrome.runtime.sendMessage(message).catch(() => {});
 }
 
+/**
+ * Serialises every read-modify-write of `targetTabIds`.
+ *
+ * Two panels opening at once is not a hypothetical: restoring a browser session
+ * reopens several DevTools windows within milliseconds of each other. Without
+ * this, both would read the same target list and the second write would drop the
+ * first tab — leaving one tab silently unmocked.
+ */
+let targetQueue: Promise<void> = Promise.resolve();
+
+function queueTargetChange(fn: (current: number[]) => number[]): Promise<void> {
+  const run = targetQueue.then(async () => {
+    const workspace = await loadWorkspace();
+    const next = [...new Set(fn(workspace.targetTabIds))];
+    if (next.length === workspace.targetTabIds.length &&
+        next.every((id) => workspace.targetTabIds.includes(id))) {
+      return;
+    }
+    workspace.targetTabIds = next;
+    await saveWorkspace(workspace);
+  });
+  targetQueue = run.catch(() => undefined);
+  return run;
+}
+
+function setTargetTabs(tabIds: number[]): Promise<void> {
+  return queueTargetChange(() => tabIds);
+}
+
+/** Adds or removes one tab from the target set, leaving the rest alone. */
+function targetTab(tabId: number, on: boolean): Promise<void> {
+  return queueTargetChange((current) =>
+    on ? [...current, tabId] : current.filter((id) => id !== tabId),
+  );
+}
+
 function recordHit(tabId: number, partial: Omit<HitRecord, 'id' | 'tabId'>): HitRecord {
   const hit: HitRecord = { ...partial, id: `h${++hitSeq}`, tabId };
   hits.push(hit);
@@ -78,6 +128,57 @@ function recordHit(tabId: number, partial: Omit<HitRecord, 'id' | 'tabId'>): Hit
   emit({ type: 'hit', hit });
   return hit;
 }
+
+// ---------------------------------------------------------------------------
+// The DevTools panel's lifetime
+// ---------------------------------------------------------------------------
+
+/**
+ * A panel targets its own inspected tab for as long as it is open.
+ *
+ * This is why targeting needs no UI: opening the Network Mock panel on a tab is
+ * the act of choosing it. A long-lived port is the only reliable signal — a
+ * DevTools window can be closed, or its whole browser window torn down, without
+ * the page getting a chance to send a farewell message, but `onDisconnect`
+ * always fires.
+ *
+ * Reference-counted, because two DevTools windows can inspect the same tab (and
+ * because a panel reloads during development); the tab stays targeted until the
+ * last one goes away.
+ */
+const panelsByTab = new Map<number, number>();
+
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== PANEL_PORT) return;
+
+  let tabId: number | null = null;
+
+  port.onMessage.addListener((message: PanelHello) => {
+    if (message?.type !== 'panel-hello' || typeof message.tabId !== 'number') return;
+    if (tabId !== null) return; // one hello per port
+
+    tabId = message.tabId;
+    panelsByTab.set(tabId, (panelsByTab.get(tabId) ?? 0) + 1);
+    void targetTab(tabId, true);
+  });
+
+  port.onDisconnect.addListener(() => {
+    if (tabId === null) return;
+    const remaining = (panelsByTab.get(tabId) ?? 1) - 1;
+
+    if (remaining > 0) {
+      panelsByTab.set(tabId, remaining);
+      return;
+    }
+
+    panelsByTab.delete(tabId);
+    void targetTab(tabId, false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Request/response messaging
+// ---------------------------------------------------------------------------
 
 chrome.runtime.onMessage.addListener(
   (message: ToWorker, sender, sendResponse: (response: FromWorker) => void) => {
@@ -112,15 +213,16 @@ chrome.runtime.onMessage.addListener(
           }
 
           case 'set-workspace': {
-            await saveWorkspace(message.workspace);
+            // Targeting is session state owned by this worker, never by the
+            // panel: a stale workspace read would otherwise untarget the tab.
+            const current = await loadWorkspace();
+            await saveWorkspace({ ...message.workspace, targetTabIds: current.targetTabIds });
             sendResponse({ type: 'ok' });
             return;
           }
 
           case 'set-target-tabs': {
-            const workspace = await loadWorkspace();
-            workspace.targetTabIds = [...new Set(message.tabIds)];
-            await saveWorkspace(workspace);
+            await setTargetTabs(message.tabIds);
             sendResponse({ type: 'ok' });
             return;
           }
@@ -134,7 +236,9 @@ chrome.runtime.onMessage.addListener(
           }
 
           case 'clear-hits': {
-            hits = [];
+            // A panel only ever shows its own tab, so it clears only its own
+            // rows; the MCP tool omits tabId and clears everything.
+            hits = message.tabId === undefined ? [] : hits.filter((h) => h.tabId !== message.tabId);
             sendResponse({ type: 'ok' });
             return;
           }
@@ -163,11 +267,7 @@ chrome.runtime.onMessage.addListener(
 startBridge({
   loadWorkspace,
   saveWorkspace,
-  setTargetTabs: async (tabIds) => {
-    const workspace = await loadWorkspace();
-    workspace.targetTabIds = [...new Set(tabIds)];
-    await saveWorkspace(workspace);
-  },
+  setTargetTabs,
   getHits: (tabId, limit) => {
     const filtered = tabId === undefined ? hits : hits.filter((h) => h.tabId === tabId);
     return filtered.slice(-(limit ?? HIT_LIMIT));
@@ -181,9 +281,8 @@ startBridge({
 /** A closed tab must stop being a target, or its id could later be recycled. */
 chrome.tabs.onRemoved.addListener((tabId) => {
   void (async () => {
-    const workspace = await loadWorkspace();
-    if (!workspace.targetTabIds.includes(tabId)) return;
-    workspace.targetTabIds = workspace.targetTabIds.filter((id) => id !== tabId);
-    await saveWorkspace(workspace);
+    panelsByTab.delete(tabId);
+    hits = hits.filter((hit) => hit.tabId !== tabId);
+    await targetTab(tabId, false);
   })();
 });

@@ -77,9 +77,9 @@ reasonable place to accept a limitation rather than add risk.
 
 ## Matching rules
 
-Resolution is **first match wins**, ordered by group order and then mock order within
-the group. Put specific mocks before catch-alls. An unmatched request always falls
-through to the real network.
+Resolution is **first match wins**, in depth-first tree order — exactly the order the
+panel shows, top to bottom. Put specific mocks above catch-alls. An unmatched request
+always falls through to the real network.
 
 | `patternKind` | Semantics |
 |---|---|
@@ -94,6 +94,40 @@ immediately whether it matches.
 An invalid regex never throws. It compiles to `null` and matches nothing, so a
 half-typed pattern in the editor cannot break interception for the whole page.
 
+### Matching on the request body
+
+A mock may carry an optional `match.body` condition — the panel's **Request payload**
+tab. It only fires when the *outgoing* body satisfies it, which is how you give one
+endpoint different answers depending on what is posted to it.
+
+Reading that body is not free, and not always possible:
+
+| Source | Read as |
+|---|---|
+| `fetch(url, {body})` — string, `URLSearchParams`, `ArrayBuffer`, typed array | text |
+| `fetch(new Request(...))` with a body | text, via `request.clone()` |
+| `xhr.send(body)` — string, `URLSearchParams`, `ArrayBuffer`, typed array | text |
+| A `ReadableStream`, `Blob`, `FormData` or `Document` body | **unreadable** |
+
+A stream is left alone deliberately: draining it would break the very request we are
+about to let through. `Blob` and `FormData` would need an await that changes `fetch`'s
+timing for every caller, mocked or not, so they are not read either.
+
+**An unreadable body never satisfies a body matcher.** Failing closed is the point —
+treating "I could not read it" as a match would make a deliberately narrow mock behave
+like a catch-all.
+
+For `fetch`, the clone-and-read only happens when some live mock actually has a body
+matcher; pages that use none pay nothing. XHR hands us the body synchronously, so
+there is no such gate.
+
+### Artificial latency
+
+`response.delayMs` holds the mocked response back before delivering it, for testing
+spinners and timeouts. It applies to `fetch`, to async XHR, and to the connection
+opening for `EventSource`. It is **ignored for synchronous XHR**, where the caller is
+blocked on `send()` returning and there is nowhere to yield.
+
 ## Mocked requests do not appear in the Network panel
 
 This is the single most surprising consequence of the design, and it is not a bug.
@@ -101,14 +135,20 @@ This is the single most surprising consequence of the design, and it is not a bu
 A mocked response is manufactured inside the page. **No network request is made**, so
 Chrome's Network panel has nothing to show — the request is simply absent.
 
-That is why the panel has its own **Hit log**, which records every request the
-interceptor saw, marked `MOCKED` (with the group and mock responsible) or `passed`.
-Over MCP, the same data is available from `get_hit_log`. If you are wondering whether
-a mock fired, that is where to look — never the Network panel.
+That is why the panel has its own **Hit log** at the bottom. It is stitched from two
+sources, because neither is enough alone:
 
-The inverse also holds: the panel's **Real traffic** list is populated from
-`chrome.devtools.network`, so anything currently being mocked will not show up there
-either.
+- `MOCKED` rows come from the interceptor's own hit stream, carrying the breadcrumb
+  path of the mock that answered. Nothing else can see these.
+- `passed` rows come from `chrome.devtools.network`, which sees every real request the
+  tab made *and* its full response — which is what lets the **mock it** button
+  pre-fill a new mock from what actually came back.
+
+Both sources are scoped to the inspected tab, so the log only ever shows the tab you
+opened the panel on. Over MCP, `get_hit_log` returns the same records.
+
+If you are wondering whether a mock fired, the hit log is where to look — never the
+Network panel.
 
 ## Limitations, stated plainly
 

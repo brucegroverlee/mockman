@@ -10,11 +10,21 @@
   --muted: #5f6368;
   --line: #e0e0e0;
   --panel: #f7f7f7;
+  --hover: #f1f3f4;
+  --sel: #d3e3fd;
+  --sel-fg: #0b57d0;
   --accent: #1a73e8;
   --mocked: #188038;
+  --mocked-bg: #e6f4ea;
+  --passed-bg: #eceff1;
   --warn-bg: #fef7e0;
   --warn-fg: #8c5900;
   --error: #c5221f;
+  --s2: #188038;
+  --s3: #8c5900;
+  --s4: #c5221f;
+  --s5: #a50e0e;
+  --row-h: 22px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -24,11 +34,20 @@
     --muted: #9aa0a6;
     --line: #3c4043;
     --panel: #292a2d;
+    --hover: #35363a;
+    --sel: #204a87;
+    --sel-fg: #e8f0fe;
     --accent: #8ab4f8;
     --mocked: #81c995;
+    --mocked-bg: #1e3a26;
+    --passed-bg: #2d2e31;
     --warn-bg: #3a2f00;
     --warn-fg: #fdd663;
     --error: #f28b82;
+    --s2: #81c995;
+    --s3: #fdd663;
+    --s4: #f28b82;
+    --s5: #f6aea9;
   }
 }
 
@@ -36,11 +55,18 @@
   box-sizing: border-box;
 }
 
+html,
+body,
+#root {
+  height: 100%;
+}
+
 body {
   margin: 0;
   background: var(--bg);
   color: var(--fg);
   font: 12px/1.5 system-ui, -apple-system, 'Segoe UI', sans-serif;
+  overflow: hidden;
 }
 
 button,
@@ -53,6 +79,7 @@ textarea {
   border: 1px solid var(--line);
   border-radius: 4px;
   padding: 2px 6px;
+  min-width: 0;
 }
 
 button {
@@ -60,41 +87,65 @@ button {
   background: var(--panel);
 }
 
-button:hover {
-  border-color: var(--accent);
+button:hover:not(:disabled) {
+  background: var(--hover);
 }
 
-button.primary {
-  background: var(--accent);
-  color: #fff;
-  border-color: transparent;
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
-textarea {
-  width: 100%;
-  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
-  resize: vertical;
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
 }
 
-.invalid {
-  border-color: var(--error) !important;
+input[type='checkbox'] {
+  margin: 0;
+  padding: 0;
+  accent-color: var(--accent);
+  flex: none;
 }
 
-.app {
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
+hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 4px 0;
+}
+
+code {
+  font-family: ui-monospace, 'Cascadia Mono', 'Consolas', monospace;
+  background: var(--panel);
+  padding: 0 3px;
+  border-radius: 3px;
 }
 
 .loading,
 .empty {
   color: var(--muted);
   padding: 12px;
+  margin: 0;
+}
+
+.empty.small {
+  padding: 4px 0;
 }
 
 .hint {
   color: var(--muted);
+  margin: 4px 0;
+}
+
+.hint.small {
   font-size: 11px;
+}
+
+.hint.pad {
+  padding: 8px 0;
 }
 
 .error {
@@ -102,231 +153,564 @@ textarea {
   margin: 4px 0;
 }
 
-/* Header ------------------------------------------------------------------ */
-
-.bar,
-.tagbar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--line);
-  flex-wrap: wrap;
+.spacer {
+  flex: 1;
 }
 
-.bar .label,
-.tagbar .label {
-  color: var(--muted);
-  text-transform: uppercase;
-  font-size: 10px;
-  letter-spacing: 0.04em;
+.grow {
+  flex: 1;
+}
+
+/* --------------------------------------------------------------------------
+   Shell
+   -------------------------------------------------------------------------- */
+
+.app {
+  display: grid;
+  /* Rows are set inline (App.tsx) so the log's height is explicit and stable:
+     `auto minmax(0, 1fr) 4px <log>px`. An `auto` log row would grow with every
+     row that arrives — and a percentage max-height cannot stop it, because a
+     percentage against a content-sized track is indefinite and resolves to
+     nothing. The column is minmax(0, …) so a long url or a wide payload makes
+     its own pane scroll instead of widening the whole panel. */
+  grid-template-columns: minmax(0, 1fr);
+  height: 100%;
+  overflow: hidden;
+}
+
+.appbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
 }
 
 .master {
   display: flex;
   align-items: center;
   gap: 6px;
+  cursor: pointer;
+  user-select: none;
 }
 
-.tabs-picker {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 1px 6px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-}
-
-.chip.other button {
-  border: 0;
-  background: none;
-  padding: 0 2px;
-}
-
-.warning {
-  background: var(--warn-bg);
-  color: var(--warn-fg);
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--line);
-}
-
-/* Tags -------------------------------------------------------------------- */
-
-.tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 1px 6px;
-  border: 1px solid var(--line);
-  border-left-width: 4px;
-  border-radius: 4px;
-}
-
-.tag.off {
-  opacity: 0.5;
-  text-decoration: line-through;
-}
-
-.tag button {
-  border: 0;
-  background: none;
-  padding: 0 2px;
-}
-
-.tagpicker {
-  display: inline-flex;
-  gap: 3px;
-}
-
-.minitag {
+.bridge {
   font-size: 10px;
-  padding: 0 5px;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
   border-radius: 8px;
-  opacity: 0.55;
+  border: 1px solid var(--line);
+  color: var(--muted);
 }
 
-.minitag.on {
-  opacity: 1;
-  color: #111;
-  border-color: transparent;
+.bridge.up {
+  color: var(--mocked);
+  border-color: currentColor;
 }
-
-/* Body -------------------------------------------------------------------- */
 
 .body {
-  display: flex;
-  flex: 1;
+  display: grid;
   min-height: 0;
-}
-
-.tree {
-  width: 42%;
-  min-width: 280px;
-  border-right: 1px solid var(--line);
-  overflow: auto;
-  padding: 8px;
-}
-
-.editor {
-  flex: 1;
-  overflow: auto;
-  padding: 8px;
-}
-
-.group {
-  margin-bottom: 10px;
-  border: 1px solid var(--line);
-  border-radius: 4px;
-}
-
-.group-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 6px;
-  background: var(--panel);
-  border-bottom: 1px solid var(--line);
-  flex-wrap: wrap;
-}
-
-.group-head .name {
-  flex: 1;
-  min-width: 90px;
-  font-weight: 600;
-}
-
-.mock {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 6px;
-  cursor: pointer;
-  border-bottom: 1px solid var(--line);
-}
-
-.mock:last-child {
-  border-bottom: 0;
-}
-
-.mock:hover {
-  background: var(--panel);
-}
-
-.mock.selected {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-}
-
-/* Inert mocks are dimmed, and say why. */
-.mock.inert {
-  opacity: 0.5;
-}
-
-.mock .mock-name {
-  font-weight: 600;
-}
-
-.method {
-  font-family: ui-monospace, Consolas, monospace;
-  color: var(--accent);
-  min-width: 44px;
-}
-
-.pattern,
-.url {
-  color: var(--muted);
+  min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.pattern {
+.splitter {
+  cursor: col-resize;
+  background: var(--line);
+}
+
+.log-splitter {
+  cursor: row-resize;
+  background: var(--line);
+}
+
+.splitter:hover,
+.log-splitter:hover {
+  background: var(--accent);
+}
+
+/* --------------------------------------------------------------------------
+   Tree
+   -------------------------------------------------------------------------- */
+
+.tree-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-right: 1px solid var(--line);
+}
+
+.tree-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border-bottom: 1px solid var(--line);
+}
+
+.tree-toolbar .search {
   flex: 1;
+  min-width: 0;
 }
 
-.why {
-  font-size: 10px;
-  color: var(--warn-fg);
-  background: var(--warn-bg);
-  padding: 0 4px;
-  border-radius: 3px;
-  white-space: nowrap;
+button.icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  flex: none;
 }
 
-/* Editor ------------------------------------------------------------------ */
+.glyph {
+  width: 14px;
+  height: 14px;
+}
+
+.tree-filter-note {
+  padding: 2px 8px;
+  color: var(--muted);
+  font-size: 11px;
+  border-bottom: 1px solid var(--line);
+}
+
+.tree-scroll {
+  flex: 1;
+  overflow: auto;
+  padding-bottom: 24px;
+}
 
 .row {
   display: flex;
   align-items: center;
+  gap: 4px;
+  height: var(--row-h);
+  padding-right: 6px;
+  cursor: default;
+  user-select: none;
+  white-space: nowrap;
+  border-top: 1px solid transparent;
+  border-bottom: 1px solid transparent;
+}
+
+.row:hover {
+  background: var(--hover);
+}
+
+.row.selected {
+  background: var(--sel);
+  color: var(--sel-fg);
+}
+
+.row.inert .row-name {
+  opacity: 0.5;
+  text-decoration: line-through;
+  text-decoration-color: var(--muted);
+}
+
+.row.matched .row-name {
+  font-weight: 600;
+}
+
+.row.dragging {
+  opacity: 0.4;
+}
+
+.row.drop-before {
+  border-top-color: var(--accent);
+}
+
+.row.drop-after {
+  border-bottom-color: var(--accent);
+}
+
+.row.drop-inside {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.twisty {
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1;
+  flex: none;
+}
+
+.twisty-spacer {
+  width: 14px;
+  flex: none;
+}
+
+.row-check {
+  flex: none;
+}
+
+.row-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.row-name,
+.rename {
+  flex: 1;
+  min-width: 0;
+}
+
+.rename {
+  height: 18px;
+  padding: 0 4px;
+}
+
+.row-label {
+  font-size: 10px;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 5px;
+  flex: none;
+}
+
+.row-why {
+  color: var(--warn-fg);
+  font-weight: 700;
+  flex: none;
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.dot.off {
+  opacity: 0.3;
+}
+
+/* Method badges, shared by the tree and the log. */
+.method {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  min-width: 30px;
+  text-align: right;
+  flex: none;
+}
+
+.m-get { color: var(--s2); }
+.m-post { color: var(--accent); }
+.m-put,
+.m-patch { color: var(--s3); }
+.m-delete { color: var(--s4); }
+
+.menu-wrap {
+  position: relative;
+}
+
+.menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+}
+
+.menu {
+  position: absolute;
+  right: 0;
+  top: 24px;
+  z-index: 11;
+  min-width: 190px;
+  padding: 4px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 0.22);
+}
+
+.menu > button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: none;
+}
+
+.menu > button:hover {
+  background: var(--hover);
+}
+
+.menu-heading {
+  font-weight: 600;
+  padding: 2px 6px;
+  color: var(--muted);
+}
+
+.tag-manager {
+  padding: 2px;
+}
+
+.tag-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+}
+
+.tag-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* --------------------------------------------------------------------------
+   Detail
+   -------------------------------------------------------------------------- */
+
+.detail {
+  overflow: auto;
+  padding: 8px 10px;
+  min-width: 0;
+}
+
+.empty-detail {
+  display: grid;
+  place-items: center;
+}
+
+.breadcrumb {
+  color: var(--muted);
+  font-size: 11px;
+  margin-bottom: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.crumb.off {
+  text-decoration: line-through;
+}
+
+.crumb.muted {
+  font-style: italic;
+}
+
+.breadcrumb .sep {
+  margin: 0 5px;
+}
+
+.title-row {
+  display: flex;
+  align-items: center;
   gap: 6px;
   margin-bottom: 6px;
+}
+
+.title-input {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 600;
+  border-color: transparent;
+  background: none;
+  padding: 2px 4px;
+}
+
+.title-input:hover,
+.title-input:focus {
+  border-color: var(--line);
+  background: var(--bg);
+}
+
+.node-actions {
+  display: flex;
+  gap: 4px;
+  flex: none;
+}
+
+button.danger:hover:not(:disabled) {
+  color: var(--error);
+  border-color: currentColor;
+}
+
+.inactive-note {
+  background: var(--warn-bg);
+  color: var(--warn-fg);
+  padding: 4px 8px;
+  border-radius: 4px;
+  margin-bottom: 6px;
+}
+
+.url-row {
+  display: flex;
+  gap: 4px;
+}
+
+.pattern-kind {
+  flex: none;
+}
+
+.url-input {
+  flex: 1;
+  font-family: ui-monospace, 'Cascadia Mono', 'Consolas', monospace;
+}
+
+.url-input.invalid,
+.code.invalid {
+  border-color: var(--error);
+}
+
+.field-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+  align-items: flex-end;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.field > span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.field.narrow input {
+  width: 92px;
+}
+
+.field.grow {
+  flex: 1;
+}
+
+.s-2xx { color: var(--s2); }
+.s-3xx { color: var(--s3); }
+.s-4xx { color: var(--s4); }
+.s-5xx { color: var(--s5); }
+
+.tag-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  min-height: 22px;
+}
+
+.chip {
+  font-size: 11px;
+  padding: 0 7px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: none;
+  color: var(--muted);
+}
+
+.chip.on {
+  color: #14181d;
+  font-weight: 600;
+}
+
+.chip.tag-off {
+  text-decoration: line-through;
+}
+
+.tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--line);
+  margin-top: 4px;
+}
+
+.tabs button {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: none;
+  padding: 4px 10px;
+  color: var(--muted);
+}
+
+.tabs button.active {
+  color: var(--fg);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+.tabs .pip {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.tabs .count {
+  font-size: 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 5px;
+}
+
+.tab-body {
+  padding-top: 6px;
+}
+
+.tab-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
   flex-wrap: wrap;
 }
 
-.grow {
-  flex: 1;
-  min-width: 120px;
+.inline-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  user-select: none;
 }
 
-fieldset {
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  margin: 0 0 10px;
-  padding: 8px;
+.headers {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
 }
 
-legend {
-  color: var(--muted);
-  text-transform: uppercase;
-  font-size: 10px;
-  letter-spacing: 0.04em;
+.header-row {
+  display: flex;
+  gap: 4px;
+  width: 100%;
+}
+
+.header-row input:first-child {
+  width: 180px;
+  flex: none;
+}
+
+.tester {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
 }
 
 .match-yes {
@@ -335,77 +719,185 @@ legend {
 }
 
 .match-no {
-  color: var(--error);
+  color: var(--muted);
 }
 
-/* Recorded traffic + hit log --------------------------------------------- */
+/* --------------------------------------------------------------------------
+   Code editor
+   -------------------------------------------------------------------------- */
 
-.recorded,
-.hits {
-  border-top: 1px solid var(--line);
-  max-height: 30vh;
+.code {
+  display: flex;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--bg);
+
+  /* Both halves must agree exactly, or the gutter drifts from the text. */
+  --code-font: 11px/16px ui-monospace, 'Cascadia Mono', 'Consolas', monospace;
+}
+
+.code-gutter {
+  font: var(--code-font);
+  padding: 6px 6px 6px 8px;
+  text-align: right;
+  color: var(--muted);
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+  user-select: none;
+  overflow: hidden;
+  flex: none;
+}
+
+.code-area {
+  font: var(--code-font);
+  flex: 1;
+  min-height: 140px;
+  max-height: 46vh;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 0;
+  resize: vertical;
+  overflow: auto;
+  white-space: pre;
+  tab-size: 2;
+}
+
+.code-area:focus-visible {
+  outline-offset: -2px;
+}
+
+/* --------------------------------------------------------------------------
+   Hit log
+   -------------------------------------------------------------------------- */
+
+/*
+ * Height comes from the grid track (set inline in App.tsx), so this must not
+ * size itself: `min-height: 0` lets it be smaller than its content, and the
+ * rows scroll inside instead of pushing the panel around.
+ */
+.log {
   display: flex;
   flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
 }
 
-.recorded-head,
-.hits-head {
+.log-head {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 10px;
+  padding: 4px 8px;
   background: var(--panel);
-  flex-wrap: wrap;
+  border-bottom: 1px solid var(--line);
+  flex: none;
 }
 
-.recorded-rows,
-.hit-rows {
+.log-head .hint {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.log-filter {
+  width: 130px;
+  flex: none;
+}
+
+.log-counts {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  flex: none;
+}
+
+.log-rows {
+  flex: 1;
+  min-height: 0;
   overflow: auto;
 }
 
-.recorded-row,
-.hit {
+.log-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 2px 10px;
-  border-bottom: 1px solid var(--line);
+  padding: 1px 8px;
+  height: var(--row-h);
+  white-space: nowrap;
+  border-bottom: 1px solid transparent;
 }
 
-.hit .url,
-.recorded-row .url {
+.log-row:hover {
+  background: var(--hover);
+}
+
+.log-row .url {
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: ui-monospace, 'Cascadia Mono', 'Consolas', monospace;
+  font-size: 11px;
 }
 
 .badge {
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
-  padding: 0 4px;
+  letter-spacing: 0.04em;
+  padding: 0 5px;
   border-radius: 3px;
-  min-width: 52px;
-  text-align: center;
-}
-
-.hit.mocked .badge {
-  background: var(--mocked);
-  color: #fff;
-}
-
-.hit.passed .badge {
-  background: var(--line);
+  flex: none;
+  background: var(--passed-bg);
   color: var(--muted);
 }
 
-.hit.passed {
-  opacity: 0.7;
-}
-
-.via {
+.badge.mocked {
+  background: var(--mocked-bg);
   color: var(--mocked);
 }
 
-.status,
-.tab {
+.log-row .status {
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+
+.log-row .via {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11px;
   color: var(--muted);
-  font-family: ui-monospace, Consolas, monospace;
+  border: 0;
+  background: none;
+  padding: 0 4px;
+  flex: none;
+}
+
+.log-row .via:hover:not(:disabled) {
+  color: var(--accent);
+  text-decoration: underline;
+  background: none;
+}
+
+/*
+ * Always visible, never hover-revealed: capturing a real request is the main
+ * thing anyone does in this log, and a control you have to go looking for is a
+ * control most people never find.
+ */
+.mock-it {
+  font-size: 11px;
+  padding: 0 8px;
+  flex: none;
+  color: var(--muted);
+}
+
+.log-row:hover .mock-it {
+  color: var(--accent);
+  border-color: currentColor;
 }

@@ -1,0 +1,195 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Network Mock — panel harness</title>
+    <style>
+      html, body { height: 100%; margin: 0; }
+      #root { height: 100%; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+
+    <!--
+      Renders the real built panel against a stubbed `chrome`, so the UI can be
+      looked at (and driven) without installing the extension or opening
+      DevTools. The stub is deliberately thin: it holds a workspace in memory and
+      answers the same messages the service worker does, which is enough for
+      every panel interaction except live network traffic — that is faked below
+      by firing onRequestFinished on a timer.
+
+      This is a harness for eyeballing and for smoke-testing, not a replacement
+      for a real DevTools session. The manual pass in README.md still applies.
+    -->
+    <script>
+      const INSPECTED_TAB_ID = 101;
+
+      const folder = (id, name, children, over = {}) => ({
+        kind: 'folder', id, name, enabled: true, tagIds: [], order: 0,
+        expanded: true, children, ...over,
+      });
+      const mock = (id, name, method, urlPattern, over = {}) => ({
+        kind: 'mock', id, name, enabled: true, tagIds: [], order: 0,
+        match: { method, urlPattern, patternKind: 'glob' },
+        response: { status: 200, headers: {}, body: '{\n  "ok": true\n}', bodyKind: 'json', delayMs: 0 },
+        ...over,
+      });
+
+      let workspace = {
+        version: 2,
+        enabled: true,
+        targetTabIds: [],
+        tags: [
+          { id: 'tag_a', name: 'slow', color: '#e5c07b', enabled: true },
+          { id: 'tag_b', name: 'wip', color: '#c678dd', enabled: false },
+        ],
+        tree: [
+          folder('f1', 'Web-edge-API', [
+            folder('f2', 'Bar Rewards', [mock('m1', 'List rewards', 'GET', '*/api/rewards')]),
+            folder('f3', 'Locations', [mock('m2', 'Nearby', 'GET', '*/api/locations/nearby')]),
+            folder('f4', 'Jukeboxes', [
+              folder('f5', 'Filters', [mock('m3', 'Genres', 'GET', '*/api/genres')]),
+              folder('f6', 'Settings', [
+                mock('m4', 'Get Settings', 'GET', '*/api/jukeboxes/settings'),
+                mock('m5', 'Save Settings', 'POST', '*/api/jukeboxes/settings', {
+                  label: 'evalx',
+                  tagIds: ['tag_a'],
+                  response: {
+                    status: 200, headers: { 'x-via': 'network-mock' },
+                    body: JSON.stringify({ 'tempo-uptime-score': { flagVersion: 34, value: true, variation: 0 } }, null, 2),
+                    bodyKind: 'json', delayMs: 0,
+                  },
+                }),
+              ]),
+              mock('m6', 'Device status', 'GET', '*/api/jukeboxes/*/status', { tagIds: ['tag_b'] }),
+            ]),
+            folder('f7', 'Operators', [], { enabled: false }),
+            mock('m7', 'Health', 'GET', '*/health'),
+            mock('m8', 'Version', 'GET', '*/version'),
+          ]),
+        ],
+      };
+
+      // Renumber so `order` matches array position, the invariant the real
+      // mutations maintain.
+      (function renumber(nodes) {
+        nodes.forEach((n, i) => { n.order = i; if (n.kind === 'folder') renumber(n.children); });
+      })(workspace.tree);
+
+      const listeners = [];
+      const broadcast = (message) => listeners.forEach((fn) => fn(message));
+
+      let hitSeq = 0;
+      const hits = [];
+
+      window.chrome = {
+        devtools: {
+          inspectedWindow: { tabId: INSPECTED_TAB_ID },
+          network: {
+            onRequestFinished: {
+              _listeners: [],
+              addListener(fn) { this._listeners.push(fn); },
+              removeListener(fn) { this._listeners = this._listeners.filter((f) => f !== fn); },
+              _emit(entry) { this._listeners.forEach((fn) => fn(entry)); },
+            },
+          },
+        },
+        runtime: {
+          async sendMessage(message) {
+            switch (message.type) {
+              case 'get-workspace': return { type: 'workspace', workspace };
+              case 'set-workspace':
+                workspace = { ...message.workspace, targetTabIds: workspace.targetTabIds };
+                setTimeout(() => broadcast({ type: 'workspace-changed', workspace }), 0);
+                return { type: 'ok' };
+              case 'set-target-tabs':
+                workspace = { ...workspace, targetTabIds: [...new Set(message.tabIds)] };
+                setTimeout(() => broadcast({ type: 'workspace-changed', workspace }), 0);
+                return { type: 'ok' };
+              case 'get-hits':
+                return { type: 'hits', hits: hits.filter((h) => message.tabId === undefined || h.tabId === message.tabId) };
+              case 'clear-hits':
+                hits.length = 0;
+                return { type: 'ok' };
+              default: return { type: 'ok' };
+            }
+          },
+          onMessage: {
+            addListener(fn) { listeners.push(fn); },
+            removeListener(fn) { const i = listeners.indexOf(fn); if (i >= 0) listeners.splice(i, 1); },
+          },
+          connect() {
+            // The panel's lifetime port. Connecting targets the inspected tab,
+            // exactly as the service worker does.
+            return {
+              postMessage(message) {
+                if (message?.type !== 'panel-hello') return;
+                workspace = { ...workspace, targetTabIds: [...new Set([...workspace.targetTabIds, message.tabId])] };
+                setTimeout(() => broadcast({ type: 'workspace-changed', workspace }), 0);
+              },
+              disconnect() {},
+              onDisconnect: { addListener() {} },
+            };
+          },
+        },
+      };
+
+      // Fake traffic, so the log has something in it: two real requests that
+      // passed, and one that a mock answered.
+      setTimeout(() => {
+        const net = chrome.devtools.network.onRequestFinished;
+        const entry = (method, url, status, body) => ({
+          startedDateTime: new Date().toISOString(),
+          request: { method, url, postData: undefined },
+          response: { status, headers: [{ name: 'content-type', value: 'application/json' }] },
+          getContent: (cb) => cb(body),
+        });
+        net._emit(entry('GET', 'https://otel.observability.app.id.example.com/v1/metrics', 200, '{}'));
+        net._emit(entry('GET', 'https://jenkins.example.com/view/job/PR-1/api/json', 200, '{"building":false}'));
+        net._emit(entry('POST', 'https://stable.example.com/v2/jukeboxes/state/current', 401, '{"error":"nope"}'));
+
+        hits.push({
+          id: `h${++hitSeq}`, tabId: INSPECTED_TAB_ID, timestamp: Date.now(),
+          method: 'POST', url: 'https://stable-tempo.example.com/api/helpshift/v1/article/tempo',
+          outcome: 'mocked', mockId: 'm5', path: 'Web-edge-API / Jukeboxes / Settings / Save Settings',
+          label: 'evalx', status: 200,
+        });
+        broadcast({ type: 'hit', hit: hits[hits.length - 1] });
+        broadcast({ type: 'bridge-status', connected: true });
+      }, 300);
+    </script>
+
+    <script type="module">
+      // The panel's JS and CSS filenames are content-hashed, so they are
+      // discovered from the built panel.html rather than hard-coded. Loading
+      // happens here, after the `chrome` stub above is in place — the panel
+      // touches chrome.devtools as soon as its module body runs.
+      const base = '/dist/devtools/';
+      const html = await (await fetch(base + 'panel.html')).text();
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+
+      // Vite emits root-absolute `/assets/...` paths, which are correct inside
+      // the packed extension but land one directory too high here, where the
+      // build output is served under /dist.
+      const resolve = (raw) => {
+        const path = new URL(raw, location.origin + base).pathname;
+        return path.startsWith('/dist/') ? path : '/dist' + path;
+      };
+
+      for (const link of doc.querySelectorAll('link[rel="stylesheet"]')) {
+        const el = document.createElement('link');
+        el.rel = 'stylesheet';
+        el.href = resolve(link.getAttribute('href'));
+        document.head.appendChild(el);
+      }
+
+      for (const script of doc.querySelectorAll('script[type="module"][src]')) {
+        const el = document.createElement('script');
+        el.type = 'module';
+        el.src = resolve(script.getAttribute('src'));
+        document.body.appendChild(el);
+      }
+    </script>
+  </body>
+</html>

@@ -126,9 +126,9 @@ When in doubt: reload the extension, then reload the page. See
 
 | Permission | Why |
 |---|---|
-| `storage` | Persist groups, mocks and tags |
+| `storage` | Persist the folder/mock tree and tags |
 | `unlimitedStorage` | Mock bodies can be large JSON payloads |
-| `tabs` | Read tab titles and URLs for the target-tab picker |
+| `tabs` | Broadcast config changes to every tab, drop closed tabs from the target set, and list tabs for the MCP `list_tabs` tool |
 | `scripting` | Content script management |
 | `host_permissions: <all_urls>` | Content scripts must be able to run on whatever page you are debugging |
 

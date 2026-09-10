@@ -12,7 +12,7 @@
  * that Chrome has not yet noticed.
  */
 
-import { emptyWorkspace } from '@network-mock/shared';
+import { migrateWorkspace } from '@network-mock/shared';
 import type { HitRecord, Workspace } from '@network-mock/shared';
 
 const DEFAULT_PORT = 8787;
@@ -61,11 +61,16 @@ async function handle(call: Call): Promise<unknown> {
       return await host.loadWorkspace();
 
     case 'setWorkspace': {
-      const workspace = call.params?.['workspace'] as Workspace | undefined;
-      if (!workspace) throw new Error('setWorkspace requires a workspace');
-      // Tab targeting is session state owned by the browser, never by the caller.
+      const incoming = call.params?.['workspace'];
+      if (!incoming) throw new Error('setWorkspace requires a workspace');
+      // Normalised on the way in: the MCP server is a separate process that can
+      // be older or newer than the extension, so its idea of the shape is not
+      // to be trusted blindly. Tab targeting is session state owned by the
+      // browser, never by the caller.
       const current = await host.loadWorkspace();
-      await host.saveWorkspace({ ...emptyWorkspace(), ...workspace, targetTabIds: current.targetTabIds });
+      const workspace: Workspace = migrateWorkspace(incoming);
+      workspace.targetTabIds = current.targetTabIds;
+      await host.saveWorkspace(workspace);
       return { ok: true };
     }
 

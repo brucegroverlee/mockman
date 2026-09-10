@@ -4,6 +4,7 @@
  *   page (MAIN world)  <--CustomEvent-->  relay (ISOLATED world)
  *   relay              <--runtime msg-->  service worker
  *   devtools panel     <--runtime msg-->  service worker
+ *   devtools panel     <--port---------->  service worker   (lifetime only)
  *   service worker     <--WebSocket--->   MCP server
  *
  * Every hop is a discriminated union on `type` so an unhandled case is a compile
@@ -27,6 +28,22 @@ export const PAGE_EVENT = {
   hit: 'network-mock:hit',
 } as const;
 
+/**
+ * The long-lived port the DevTools panel opens to the service worker.
+ *
+ * Its only job is lifetime: while the port is open the panel's inspected tab is
+ * a mocking target, and `onDisconnect` untargets it. A one-shot message could
+ * not do this, because a DevTools window can be closed without ever getting a
+ * chance to send anything.
+ */
+export const PANEL_PORT = 'network-mock:panel';
+
+/** The first and only message the panel sends over {@link PANEL_PORT}. */
+export interface PanelHello {
+  type: 'panel-hello';
+  tabId: number;
+}
+
 /** Sent as the `detail` of a {@link PAGE_EVENT.config} event. */
 export interface ConfigEventDetail {
   config: TabConfig;
@@ -46,7 +63,7 @@ export type ToWorker =
   | { type: 'set-workspace'; workspace: Workspace }
   | { type: 'set-target-tabs'; tabIds: number[] }
   | { type: 'get-hits'; tabId?: number; limit?: number }
-  | { type: 'clear-hits' };
+  | { type: 'clear-hits'; tabId?: number };
 
 /** service worker → relay/panel, in reply to {@link ToWorker}. */
 export type FromWorker =

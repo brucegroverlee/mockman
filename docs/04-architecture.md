@@ -8,8 +8,8 @@
 │                                                                          │
 │  ┌───────────────────────────┐        ┌─────────────────────────────┐    │
 │  │ DevTools panel (React)    │        │ Web page (a targeted tab)   │    │
-│  │  groups · mocks · tags    │        │                             │    │
-│  │  tab picker · hit log     │        │  ┌───────────────────────┐  │    │
+│  │  folder tree · mock editor│        │                             │    │
+│  │  hit log                  │        │  ┌───────────────────────┐  │    │
 │  └────────────┬──────────────┘        │  │ intercept.js  MAIN    │  │    │
 │               │ runtime messages      │  │ patches fetch / XHR   │  │    │
 │               │                       │  └──────────┬────────────┘  │    │
@@ -51,12 +51,30 @@ Both paths are the same path.
 
 | What | Where | Why |
 |---|---|---|
-| Groups, mocks, tags, master switch | `chrome.storage.local` | Should survive a browser restart |
+| The folder/mock tree, tags, master switch | `chrome.storage.local` | Should survive a browser restart |
 | `targetTabIds` | `chrome.storage.session` | A tab id is meaningless after a restart, and silently mocking a *recycled* id would be a nasty surprise |
 | Hit log | Service worker memory, capped at 500 | Transient debug data. Lost if the worker restarts; an accepted trade. |
 
 A closed tab is removed from `targetTabIds` automatically, for the same
 id-recycling reason.
+
+Anything read back out of `chrome.storage.local` goes through `migrateWorkspace`
+first, so a workspace written by an older build is upgraded on the way in rather than
+crashing the worker. See [09](09-data-model.md#versioning-and-migration).
+
+## Tab targeting has no UI
+
+Opening the Network Mock panel on a tab *is* how you choose it. The panel holds a
+long-lived `chrome.runtime` port open to the worker for as long as it is on screen;
+the worker targets the tab on connect and untargets it on `onDisconnect`.
+
+A port rather than a message, because a DevTools window can be closed — or its whole
+browser window torn down — without the page getting a chance to say goodbye.
+`onDisconnect` always fires. It is reference-counted, since two DevTools windows can
+inspect the same tab and a panel reloads constantly during development.
+
+The MCP `set_target_tabs` tool still exists, for driving a tab that has no panel open
+on it.
 
 ## Message flows
 
@@ -81,26 +99,29 @@ A mock fires only when **all** of these hold:
 
 1. the master switch is on;
 2. the request's tab is in `targetTabIds`;
-3. its group is enabled;
+3. **every folder above it** is enabled;
 4. the mock itself is enabled;
-5. **no tag** on the mock *or its group* is disabled.
+5. **no tag** on the mock *or on any folder above it* is disabled.
 
 Rule 5 is the interesting one: **a disabled tag is a veto.** It overrides the
 `enabled` flag on everything carrying it. That is what makes tags worth having — you
 can kill a cross-cutting slice ("all the slow-response mocks") with one toggle,
-without touching the groups those mocks live in.
+without touching the folders those mocks live in.
 
 Reasons are evaluated broadest-first, so the explanation you get is the most useful
 one — there is no point being told a tag is disabled when the master switch is off.
 
-| Master | Tab targeted | Group | Mock | Tag | Result |
+| Master | Tab targeted | Folders above | Mock | Tag | Result |
 |---|---|---|---|---|---|
 | off | – | – | – | – | `workspace-disabled` |
 | on | no | – | – | – | `tab-not-targeted` |
-| on | yes | off | – | – | `group-disabled` |
-| on | yes | on | off | – | `mock-disabled` |
-| on | yes | on | on | one disabled | `tag-disabled` |
-| on | yes | on | on | all enabled | **active** |
+| on | yes | any off | – | – | `folder-disabled` |
+| on | yes | all on | off | – | `mock-disabled` |
+| on | yes | all on | on | one disabled | `tag-disabled` |
+| on | yes | all on | on | all enabled | **active** |
+
+When several folders above a mock are disabled, the **outermost** one is reported —
+that is the one you actually have to turn back on.
 
 A tag id that no longer resolves to a tag is **ignored**, not treated as a veto —
 deleting a tag must not silently disable every mock that once referenced it.
@@ -112,6 +133,10 @@ why.
 ## Resolution order
 
 `compileActiveMocks` flattens the workspace into the mocks that are live for a given
-tab, sorted by group order then mock order, and hands that list to the page. So
-page-side code never reasons about groups or tags — it just walks a list and takes the
-**first match**. Anything unmatched falls through to the real network.
+tab in **depth-first tree order** — exactly the order the panel shows, top to bottom —
+and hands that list to the page. So page-side code never reasons about the tree or
+tags: it just walks a list and takes the **first match**. Anything unmatched falls
+through to the real network.
+
+Each compiled entry carries its breadcrumb `path` (`"Web-edge-API / Jukeboxes / Save
+Settings"`), which is what the hit log shows so you can tell *which* mock answered.

@@ -1,116 +1,140 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { test } from 'node:test';
 
-import { explainMock, findVetoingTag, indexTags } from './enablement.ts';
-import type { Group, Mock, Tag, Workspace } from './types.ts';
+import { explainMock, indexTags } from './enablement.ts';
+import { findMockNode } from './tree.ts';
+import { createFolder, createMock, createTag, defaultMatch, defaultResponse, setEnabled } from './mutations.ts';
+import { emptyWorkspace } from './types.ts';
+import type { Folder, Mock, Workspace } from './types.ts';
 
-const TAB = 42;
+const TAB = 7;
 
-function mock(over: Partial<Mock> = {}): Mock {
-  return {
-    id: 'm1',
-    name: 'users',
-    enabled: true,
-    tagIds: [],
-    order: 0,
-    match: { method: 'GET', urlPattern: '*/api/users', patternKind: 'glob' },
-    response: { status: 200, headers: {}, body: '{}', bodyKind: 'json' },
-    ...over,
-  };
+/** A workspace with one folder holding one mock, both enabled and targeted. */
+function fixture(): { workspace: Workspace; folderId: string; mockId: string } {
+  let workspace = emptyWorkspace();
+  workspace.targetTabIds = [TAB];
+
+  const folder = createFolder(workspace, null, { name: 'Api' });
+  workspace = folder.workspace;
+
+  const mock = createMock(workspace, folder.folder.id, {
+    name: 'Users',
+    match: defaultMatch(),
+    response: defaultResponse(),
+  });
+
+  return { workspace: mock.workspace, folderId: folder.folder.id, mockId: mock.mock.id };
 }
 
-function group(over: Partial<Group> = {}): Group {
-  return { id: 'g1', name: 'auth', enabled: true, tagIds: [], order: 0, mocks: [], ...over };
+function locate(workspace: Workspace, mockId: string): { ancestors: Folder[]; mock: Mock } {
+  const located = findMockNode(workspace.tree, mockId);
+  assert.ok(located, 'mock should still be in the tree');
+  return { ancestors: located.ancestors, mock: located.node };
 }
 
-function tag(over: Partial<Tag> = {}): Tag {
-  return { id: 't1', name: 'slow', color: '#f00', enabled: true, ...over };
+function explain(workspace: Workspace, mockId: string, tabId = TAB) {
+  const { ancestors, mock } = locate(workspace, mockId);
+  return explainMock(workspace, ancestors, mock, tabId);
 }
 
-function workspace(over: Partial<Workspace> = {}): Workspace {
-  return { version: 1, enabled: true, groups: [], tags: [], targetTabIds: [TAB], ...over };
-}
-
-describe('explainMock', () => {
-  it('activates when everything is enabled and the tab is targeted', () => {
-    const m = mock();
-    const g = group({ mocks: [m] });
-    assert.deepEqual(explainMock(workspace({ groups: [g] }), g, m, TAB), { active: true });
-  });
-
-  it('reports the master switch before anything else', () => {
-    // Deliberately broken in several ways at once: the most useful explanation is
-    // the broadest one, not the narrowest.
-    const m = mock({ enabled: false });
-    const g = group({ enabled: false, mocks: [m] });
-    const ws = workspace({ enabled: false, groups: [g], targetTabIds: [] });
-    assert.equal(explainMock(ws, g, m, TAB).reason, 'workspace-disabled');
-  });
-
-  it('deactivates a tab that is not targeted', () => {
-    const m = mock();
-    const g = group({ mocks: [m] });
-    const ws = workspace({ groups: [g], targetTabIds: [999] });
-    assert.equal(explainMock(ws, g, m, TAB).reason, 'tab-not-targeted');
-  });
-
-  it('deactivates when the group is off even though the mock is on', () => {
-    const m = mock({ enabled: true });
-    const g = group({ enabled: false, mocks: [m] });
-    assert.equal(explainMock(workspace({ groups: [g] }), g, m, TAB).reason, 'group-disabled');
-  });
-
-  it('deactivates when the mock is off even though the group is on', () => {
-    const m = mock({ enabled: false });
-    const g = group({ enabled: true, mocks: [m] });
-    assert.equal(explainMock(workspace({ groups: [g] }), g, m, TAB).reason, 'mock-disabled');
-  });
-
-  it("vetoes via a disabled tag on the mock, despite the mock's own enabled flag", () => {
-    const t = tag({ id: 'off', enabled: false });
-    const m = mock({ enabled: true, tagIds: ['off'] });
-    const g = group({ mocks: [m] });
-    const result = explainMock(workspace({ groups: [g], tags: [t] }), g, m, TAB);
-    assert.equal(result.reason, 'tag-disabled');
-    assert.equal(result.vetoingTagId, 'off');
-  });
-
-  it('vetoes via a disabled tag inherited from the group', () => {
-    const t = tag({ id: 'off', enabled: false });
-    const m = mock({ tagIds: [] });
-    const g = group({ tagIds: ['off'], mocks: [m] });
-    const result = explainMock(workspace({ groups: [g], tags: [t] }), g, m, TAB);
-    assert.equal(result.reason, 'tag-disabled');
-    assert.equal(result.vetoingTagId, 'off');
-  });
-
-  it('stays active when a referenced tag is enabled', () => {
-    const t = tag({ id: 'on', enabled: true });
-    const m = mock({ tagIds: ['on'] });
-    const g = group({ mocks: [m] });
-    assert.equal(explainMock(workspace({ groups: [g], tags: [t] }), g, m, TAB).active, true);
-  });
-
-  it('ignores dangling tag references rather than treating them as a veto', () => {
-    // Deleting a tag must not silently disable every mock that referenced it.
-    const m = mock({ tagIds: ['deleted-tag'] });
-    const g = group({ mocks: [m] });
-    assert.equal(explainMock(workspace({ groups: [g], tags: [] }), g, m, TAB).active, true);
-  });
+test('a targeted, enabled mock is active', () => {
+  const { workspace, mockId } = fixture();
+  assert.deepEqual(explain(workspace, mockId), { active: true });
 });
 
-describe('findVetoingTag', () => {
-  it('returns the first disabled tag in order', () => {
-    const tags = indexTags([
-      tag({ id: 'a', enabled: true }),
-      tag({ id: 'b', enabled: false }),
-      tag({ id: 'c', enabled: false }),
-    ]);
-    assert.equal(findVetoingTag(['a', 'b', 'c'], tags), 'b');
-  });
+test('the master switch wins over everything', () => {
+  const { workspace, mockId } = fixture();
+  const off = setEnabled(workspace, 'workspace', null, false);
+  assert.equal(explain(off, mockId).reason, 'workspace-disabled');
+});
 
-  it('returns undefined when all tags are enabled', () => {
-    const tags = indexTags([tag({ id: 'a' }), tag({ id: 'b' })]);
-    assert.equal(findVetoingTag(['a', 'b'], tags), undefined);
+test('an untargeted tab is not mocked', () => {
+  const { workspace, mockId } = fixture();
+  assert.equal(explain(workspace, mockId, TAB + 1).reason, 'tab-not-targeted');
+});
+
+test('a disabled folder deactivates the mocks inside it', () => {
+  const { workspace, folderId, mockId } = fixture();
+  const off = setEnabled(workspace, 'folder', folderId, false);
+  const activation = explain(off, mockId);
+  assert.equal(activation.reason, 'folder-disabled');
+  assert.equal(activation.disabledFolderId, folderId);
+});
+
+test('a disabled folder anywhere up the chain deactivates the mock', () => {
+  let workspace = emptyWorkspace();
+  workspace.targetTabIds = [TAB];
+
+  const outer = createFolder(workspace, null, { name: 'Outer' });
+  workspace = outer.workspace;
+  const inner = createFolder(workspace, outer.folder.id, { name: 'Inner' });
+  workspace = inner.workspace;
+  const mock = createMock(workspace, inner.folder.id, {
+    name: 'Deep',
+    match: defaultMatch(),
+    response: defaultResponse(),
   });
+  workspace = mock.workspace;
+
+  assert.equal(explain(workspace, mock.mock.id).active, true);
+
+  // The outermost disabled folder is the one reported, since that is the one
+  // you have to turn back on.
+  const off = setEnabled(workspace, 'folder', outer.folder.id, false);
+  const activation = explain(off, mock.mock.id);
+  assert.equal(activation.reason, 'folder-disabled');
+  assert.equal(activation.disabledFolderId, outer.folder.id);
+});
+
+test('a disabled mock is inert even inside an enabled folder', () => {
+  const { workspace, mockId } = fixture();
+  const off = setEnabled(workspace, 'mock', mockId, false);
+  assert.equal(explain(off, mockId).reason, 'mock-disabled');
+});
+
+test('a disabled tag on the mock vetoes it', () => {
+  const { workspace, mockId } = fixture();
+  const { workspace: tagged, tag } = createTag(workspace, { name: 'slow' });
+
+  let next = tagged;
+  next = { ...next, tree: next.tree };
+  const located = findMockNode(next.tree, mockId)!;
+  located.node.tagIds.push(tag.id); // direct push is fine: fresh objects from the fixture
+
+  assert.equal(explain(next, mockId).active, true, 'an enabled tag changes nothing');
+
+  const vetoed = setEnabled(next, 'tag', tag.id, false);
+  const activation = explain(vetoed, mockId);
+  assert.equal(activation.reason, 'tag-disabled');
+  assert.equal(activation.vetoingTagId, tag.id);
+});
+
+test('a disabled tag on an ancestor folder vetoes the mocks beneath it', () => {
+  const { workspace, folderId, mockId } = fixture();
+  const { workspace: tagged, tag } = createTag(workspace, { name: 'wip' });
+
+  const folder = tagged.tree.find((node) => node.id === folderId)!;
+  folder.tagIds.push(tag.id);
+
+  const vetoed = setEnabled(tagged, 'tag', tag.id, false);
+  const activation = explain(vetoed, mockId);
+  assert.equal(activation.reason, 'tag-disabled');
+  assert.equal(activation.vetoingTagId, tag.id);
+});
+
+test('an unknown tag id is ignored rather than treated as a veto', () => {
+  const { workspace, mockId } = fixture();
+  const located = findMockNode(workspace.tree, mockId)!;
+  located.node.tagIds.push('tag_deleted');
+
+  assert.equal(explain(workspace, mockId).active, true);
+});
+
+test('the broadest reason is reported first', () => {
+  const { workspace, folderId, mockId } = fixture();
+  let off = setEnabled(workspace, 'workspace', null, false);
+  off = setEnabled(off, 'folder', folderId, false);
+  off = setEnabled(off, 'mock', mockId, false);
+
+  assert.equal(explain(off, mockId).reason, 'workspace-disabled');
 });

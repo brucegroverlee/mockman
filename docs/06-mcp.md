@@ -145,8 +145,9 @@ because any local program can forge it.
 
 | Tool | Purpose |
 |---|---|
-| `get_workspace` | The whole workspace: groups, mocks, tags, master switch, targeted tabs. Start here to discover ids. |
-| `get_status` | Compact summary, and **per mock whether it is ACTIVE or why not**. The fastest answer to "why is my mock not firing?". |
+| `get_workspace` | The whole folder/mock tree, tags, master switch, targeted tabs. Start here to discover ids. `full: true` includes response bodies; the default is a compact outline. |
+| `get_status` | Compact summary, and **per mock its breadcrumb path plus whether it is ACTIVE or why not**. The fastest answer to "why is my mock not firing?". |
+| `find_nodes` | Search by name or url pattern; returns ids with their breadcrumb paths. Cheaper than `get_workspace` when you know what you are after. |
 
 ### Tabs
 
@@ -155,20 +156,43 @@ because any local program can forge it.
 | `list_tabs` | Tabs the extension can see, with ids, titles, urls |
 | `set_target_tabs` | Replace the set of tabs that get mocked. Nothing is mocked outside these. |
 
+Note the DevTools panel manages targeting itself — it targets its own tab while open
+and untargets it on close. Set it by hand only to drive a tab with no panel open on
+it. Equally: **with no panel open anywhere, nothing is targeted and nothing is
+mocked**, which is the usual explanation for `tab-not-targeted`.
+
 ### Enable / disable
 
 | Tool | Purpose |
 |---|---|
-| `set_enabled` | Flip the master switch, a group, a mock, or a tag — `{kind, id, enabled}` |
+| `set_enabled` | Flip the master switch, a folder, a mock, or a tag — `{kind, id, enabled}` |
 
-### Groups, mocks, tags
+### Folders and mocks
 
-`create_group`, `update_group`, `delete_group`, `reorder_groups`,
-`create_mock`, `update_mock`, `delete_mock`,
-`create_tag`, `update_tag`, `delete_tag`.
+| Tool | Purpose |
+|---|---|
+| `create_folder` | New folder, optionally inside another (`parentId`). Nests arbitrarily deep. |
+| `update_folder` | Rename, enable/disable, retag, expand/collapse |
+| `create_mock` | New mock in a folder (`parentId: null` = top level) |
+| `update_mock` | Change any field. `match` and `response` are replaced wholesale, **not** deep-merged. |
 
-`reorder_groups` matters because resolution is first-match-wins: put narrow mocks
-before catch-alls.
+### Tree structure
+
+| Tool | Purpose |
+|---|---|
+| `delete_node` | Delete a folder (with everything inside) or a mock |
+| `move_node` | Reparent, optionally to a given `index`. Refuses to put a folder inside itself. |
+| `reorder_children` | Order one folder's children — this is how you make a narrow mock beat a catch-all |
+| `duplicate_node` | Copy a subtree with fresh ids — a 500 next to the 200 |
+| `rename_node` | Rename either kind |
+
+`reorder_children` and `move_node` matter because resolution is first-match-wins in
+depth-first order: put narrow mocks above catch-alls.
+
+### Tags
+
+`create_tag`, `update_tag`, `delete_tag`. Disabling a tag vetoes everything carrying
+it, and everything inside a folder carrying it.
 
 ### Observability
 
@@ -182,19 +206,35 @@ before catch-alls.
 | Tool | Purpose |
 |---|---|
 | `export_workspace` | Serialise to JSON for committing or sharing. Tab ids are excluded — they mean nothing outside the session that made them. |
-| `import_workspace` | Load it back. Replaces by default; `merge: true` appends instead. |
+| `import_workspace` | Load it back, upgrading older formats automatically. Replaces by default; `merge: true` appends instead. |
 
 ## A typical agent session
 
 ```
+get_status                    → is a tab targeted? (a panel must be open, or set it below)
 list_tabs                     → find the tab you are working in
-set_target_tabs {tabIds:[N]}  → nothing is mocked until you do this
-create_group {name:"checkout failures"}
-create_mock  {groupId, name:"payment 500",
+set_target_tabs {tabIds:[N]}  → only needed if no panel is open on it
+
+create_folder {name:"Checkout failures"}
+create_mock  {parentId, name:"payment 500",
               match:{method:"POST", urlPattern:"*/api/pay", patternKind:"glob"},
-              response:{status:500, body:"{\"error\":\"nope\"}", bodyKind:"json"}}
-get_status                    → confirm it says active
+              response:{status:500, body:"{\"error\":\"nope\"}", bodyKind:"json",
+                        delayMs:1500}}
+
+get_status                    → confirm it says active, and check the breadcrumb path
 get_hit_log                   → after exercising the page, confirm it fired
+```
+
+To make one endpoint answer differently depending on the request, add a body matcher
+and put the narrow mock first:
+
+```
+create_mock {parentId, name:"save succeeds",
+             match:{method:"POST", urlPattern:"*/api/settings", patternKind:"glob",
+                    body:{mode:"json-subset", value:"{\"action\":\"save\"}"}},
+             response:{status:200, body:"{\"ok\":true}", bodyKind:"json"}}
+
+reorder_children {parentId, orderedIds:[narrowMockId, catchAllId]}
 ```
 
 ## Concurrency

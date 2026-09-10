@@ -91,9 +91,11 @@ try {
   check('tools/list returns tools', tools.length > 0, `got ${tools.length}`);
 
   const expected = [
-    'get_workspace', 'get_status', 'list_tabs', 'set_target_tabs', 'set_enabled',
-    'create_group', 'update_group', 'delete_group', 'reorder_groups',
-    'create_mock', 'update_mock', 'delete_mock',
+    'get_workspace', 'get_status', 'find_nodes',
+    'list_tabs', 'set_target_tabs', 'set_enabled',
+    'create_folder', 'update_folder',
+    'create_mock', 'update_mock',
+    'delete_node', 'move_node', 'reorder_children', 'duplicate_node', 'rename_node',
     'create_tag', 'update_tag', 'delete_tag',
     'get_hit_log', 'clear_hit_log', 'export_workspace', 'import_workspace',
   ];
