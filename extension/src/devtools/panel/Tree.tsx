@@ -365,7 +365,7 @@ function Row(props: RowProps): React.JSX.Element {
       >
         {folder ? (
           <button
-            className="twisty"
+            className={`twisty ${expanded ? 'open' : ''}`}
             title={expanded ? 'Collapse' : 'Expand'}
             onClick={(e) => {
               e.stopPropagation();
@@ -376,7 +376,7 @@ function Row(props: RowProps): React.JSX.Element {
               void update((w) => setExpanded(w, folder.id, !folder.expanded));
             }}
           >
-            {expanded ? '▾' : '▸'}
+            <ChevronIcon />
           </button>
         ) : (
           <span className="twisty-spacer" />
@@ -591,35 +591,99 @@ function MethodBadge({ method }: { method: string }): React.JSX.Element {
   return <span className={`method m-${method.toLowerCase()}`}>{method}</span>;
 }
 
-function FolderIcon({ open }: { open: boolean }): React.JSX.Element {
+/**
+ * The expand/collapse arrow.
+ *
+ * One glyph rotated by CSS rather than two, so the two states cannot drift
+ * apart optically and the transition is free. Stroked, not filled: a filled
+ * triangle this small renders as a smudge, whereas a 1.6px stroke stays crisp.
+ */
+function ChevronIcon(): React.JSX.Element {
   return (
-    <svg className="glyph" viewBox="0 0 16 16" aria-hidden="true">
+    <svg className="chevron" viewBox="0 0 16 16" aria-hidden="true">
       <path
-        d={
-          open
-            ? 'M1.5 13V4h4l1.5 1.5h6.5V6H6.6L4.8 13z'
-            : 'M1.5 13V3.5h4L7 5h7.5v8z'
-        }
-        fill="currentColor"
+        d="M6.5 3.5 11 8l-4.5 4.5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
       />
     </svg>
   );
 }
 
-function FolderPlusIcon(): React.JSX.Element {
+/**
+ * The classic tabbed folder, drawn to read at 15px.
+ *
+ * Filled rather than outlined: at this size an outline folder and an outline
+ * file are nearly the same shape, and the solid silhouette is what makes a
+ * folder recognisable at a glance. The open state tilts the front panel, which
+ * is the only open-folder convention people actually read as "open".
+ */
+function FolderIcon({ open }: { open: boolean }): React.JSX.Element {
   return (
-    <svg className="glyph" viewBox="0 0 16 16" aria-hidden="true">
-      <path d="M1.5 13V3h4l1.5 1.5h7.5V13z" fill="currentColor" opacity="0.55" />
-      <path d="M8.5 6.5h-1v2h-2v1h2v2h1v-2h2v-1h-2z" fill="currentColor" />
+    <svg className="glyph folder" viewBox="0 0 16 16" aria-hidden="true">
+      {open ? (
+        <>
+          {/* Back plate, visible above and behind the tilted front. */}
+          <path
+            d="M1 4.25c0-.69.56-1.25 1.25-1.25h3.4c.33 0 .65.13.88.37L7.7 4.5h5.05c.69 0 1.25.56 1.25 1.25V7H4.9a1.75 1.75 0 0 0-1.66 1.2L1 13.2V4.25z"
+            fill="currentColor"
+            opacity="0.6"
+          />
+          {/* Front panel, sheared right. */}
+          <path
+            d="M4.9 8h9.85c.6 0 1.02.58.84 1.15l-1.3 4.1c-.16.5-.63.85-1.16.85H2.2a.85.85 0 0 1-.8-1.13l2.05-4.4c.17-.35.52-.57.9-.57z"
+            fill="currentColor"
+          />
+        </>
+      ) : (
+        <path
+          d="M1 4.25c0-.69.56-1.25 1.25-1.25h3.4c.33 0 .65.13.88.37L7.7 4.5h6.05c.69 0 1.25.56 1.25 1.25v6.5c0 .69-.56 1.25-1.25 1.25H2.25C1.56 13.5 1 12.94 1 12.25v-8z"
+          fill="currentColor"
+        />
+      )}
     </svg>
   );
 }
 
+/** Toolbar: new folder. The plus sits outside the folder so both stay legible. */
+function FolderPlusIcon(): React.JSX.Element {
+  return (
+    <svg className="glyph" viewBox="0 0 16 16" aria-hidden="true">
+      <path
+        d="M1 4.25c0-.69.56-1.25 1.25-1.25h3.4c.33 0 .65.13.88.37L7.7 4.5h4.05c.69 0 1.25.56 1.25 1.25v2.4A4.5 4.5 0 0 0 7.2 13.5H2.25C1.56 13.5 1 12.94 1 12.25v-8z"
+        fill="currentColor"
+      />
+      <path
+        d="M11.5 9.5v4M9.5 11.5h4"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+/** Toolbar: new mock. A document with a folded corner, plus the same plus. */
 function FilePlusIcon(): React.JSX.Element {
   return (
     <svg className="glyph" viewBox="0 0 16 16" aria-hidden="true">
-      <path d="M3.5 1.5h6L13 5v9.5h-9.5z" fill="currentColor" opacity="0.55" />
-      <path d="M8.5 7h-1v2h-2v1h2v2h1v-2h2V9h-2z" fill="currentColor" />
+      <path
+        d="M3 2.25c0-.69.56-1.25 1.25-1.25H9l4 4v3.15A4.5 4.5 0 0 0 7.2 14H4.25C3.56 14 3 13.44 3 12.75v-10.5z"
+        fill="currentColor"
+      />
+      {/* The folded corner, knocked out so it reads as a fold, not a notch. */}
+      <path d="M9 1l4 4H9.6A.6.6 0 0 1 9 4.4V1z" fill="var(--bg)" opacity="0.85" />
+      <path
+        d="M11.5 9.5v4M9.5 11.5h4"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
     </svg>
   );
 }

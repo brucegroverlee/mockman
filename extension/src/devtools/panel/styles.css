@@ -16,6 +16,7 @@
   --accent: #1a73e8;
   --mocked: #188038;
   --mocked-bg: #e6f4ea;
+  --folder: #d9a441;
   --passed-bg: #eceff1;
   --warn-bg: #fef7e0;
   --warn-fg: #8c5900;
@@ -40,6 +41,7 @@
     --accent: #8ab4f8;
     --mocked: #81c995;
     --mocked-bg: #1e3a26;
+    --folder: #e0b355;
     --passed-bg: #2d2e31;
     --warn-bg: #3a2f00;
     --warn-fg: #fdd663;
@@ -267,8 +269,19 @@ button.icon {
 }
 
 .glyph {
-  width: 14px;
-  height: 14px;
+  width: 15px;
+  height: 15px;
+  flex: none;
+}
+
+/* Folders take the accent, so a folder row is distinguishable from a mock row
+   at a glance without reading either label. */
+.glyph.folder {
+  color: var(--folder);
+}
+
+.row.selected .glyph.folder {
+  color: currentColor;
 }
 
 .tree-filter-note {
@@ -334,19 +347,44 @@ button.icon {
 }
 
 .twisty {
-  width: 14px;
-  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
   padding: 0;
   border: 0;
+  border-radius: 3px;
   background: none;
   color: var(--muted);
-  font-size: 10px;
-  line-height: 1;
   flex: none;
 }
 
+.twisty:hover {
+  background: none;
+  color: var(--fg);
+}
+
+.chevron {
+  width: 12px;
+  height: 12px;
+  /* One glyph for both states: rotating it keeps them optically identical. */
+  transform: rotate(0deg);
+  transition: transform 120ms ease;
+}
+
+.twisty.open .chevron {
+  transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chevron {
+    transition: none;
+  }
+}
+
 .twisty-spacer {
-  width: 14px;
+  width: 16px;
   flex: none;
 }
 
