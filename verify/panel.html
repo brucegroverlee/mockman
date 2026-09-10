@@ -80,6 +80,33 @@
       const listeners = [];
       const broadcast = (message) => listeners.forEach((fn) => fn(message));
 
+      // A HAR entry as chrome.devtools.network reports one. `_resourceType` and
+      // `content.mimeType` are what the filter bar reads, so both are included.
+      // `contentMime` defaults to the header's value; pass '' for it to model a
+      // bodiless response, where Chrome leaves content.mimeType empty and only
+      // the header identifies the payload.
+      const makeEntry = (method, url, status, body, resourceType, mimeType, contentMime = mimeType) => ({
+        startedDateTime: new Date().toISOString(),
+        _resourceType: resourceType,
+        request: { method, url, postData: undefined },
+        response: {
+          status,
+          headers: [{ name: 'content-type', value: mimeType }],
+          content: { mimeType: contentMime, text: body },
+        },
+        getContent: (cb) => cb(body),
+      });
+
+      // Requests DevTools recorded BEFORE this panel was opened. They reach the
+      // log only via getHAR() — which is the whole point: without seeding, a
+      // panel opened mid-session shows almost nothing while Chrome's own
+      // Network panel is full.
+      const PRE_RECORDED = [
+        makeEntry('OPTIONS', 'https://events.launchdarkly.example.com/events/bulk', 204, '', 'preflight', ''),
+        makeEntry('POST', 'https://events.launchdarkly.example.com/events/bulk', 202, '{"ok":true}', 'fetch', 'application/json'),
+        makeEntry('GET', 'https://test-web-edge-api.example.com/v2/jukeboxes/settings', 200, '{"settings":[]}', 'xhr', 'application/json'),
+      ];
+
       let hitSeq = 0;
       const hits = [];
 
@@ -92,6 +119,20 @@
               addListener(fn) { this._listeners.push(fn); },
               removeListener(fn) { this._listeners = this._listeners.filter((f) => f !== fn); },
               _emit(entry) { this._listeners.forEach((fn) => fn(entry)); },
+            },
+            // What DevTools had already recorded before the panel opened.
+            _har: PRE_RECORDED,
+            getHAR(callback) {
+              // `?har=throw` makes this fail the way a hostile host would, to
+              // prove live capture does not depend on the seeding working.
+              // `?har=junk` feeds it entries that cannot be read.
+              const mode = new URLSearchParams(location.search).get('har');
+              if (mode === 'throw') throw new Error('getHAR is unavailable');
+              if (mode === 'junk') {
+                setTimeout(() => callback({ entries: [null, {}, { request: {} }, ...this._har] }), 0);
+                return;
+              }
+              setTimeout(() => callback({ entries: this._har }), 0);
             },
           },
         },
@@ -135,24 +176,11 @@
         },
       };
 
-      // Fake traffic, so the log has something in it: two real requests that
-      // passed, and one that a mock answered.
+      // Traffic that happens *after* the panel opened, reaching the log through
+      // onRequestFinished — the other half of the picture from PRE_RECORDED.
       setTimeout(() => {
         const net = chrome.devtools.network.onRequestFinished;
-        // `_resourceType` and `content.mimeType` are what the filter bar reads;
-        // both are included so the chips can be exercised here.
-        const entry = (method, url, status, body, resourceType, mimeType) => ({
-          startedDateTime: new Date().toISOString(),
-          _resourceType: resourceType,
-          request: { method, url, postData: undefined },
-          response: {
-            status,
-            headers: [{ name: 'content-type', value: mimeType }],
-            content: { mimeType },
-          },
-          getContent: (cb) => cb(body),
-        });
-
+        const entry = makeEntry;
         const traffic = [
           ['GET', 'https://otel.observability.app.id.example.com/v1/metrics', 200, '{}', 'xhr', 'application/json'],
           ['GET', 'https://jenkins.example.com/view/job/PR-1/api/json', 200, '{"building":false}', 'fetch', 'application/json'],
@@ -167,16 +195,63 @@
           ['GET', 'wss://live.example.com/jukebox/socket', 101, '', 'websocket', ''],
           ['GET', 'https://app.example.com/decoder.wasm', 200, '', 'fetch', 'application/wasm'],
           ['GET', 'https://beacon.example.com/collect', 204, '', 'ping', 'text/plain'],
+
+          // The cases that made the filter look broken against real traffic.
+          // A CORS preflight has its own resource type and no body at all, so
+          // neither `_resourceType` nor `content.mimeType` places it — yet it
+          // is unmistakably API traffic and must land under Fetch/XHR.
+          ['OPTIONS', 'https://stable-jukebox-main.example.com/v2/jukeboxes/state/current', 204, '', 'preflight', ''],
+          // A resource type newer than this build: must fall through to the
+          // mime heuristic rather than silently dropping into "Other".
+          ['GET', 'https://id.example.com/accounts', 200, '{}', 'fedcm', 'application/json'],
+          // No resource type at all, and no body — only the header identifies it.
+          ['POST', 'https://api.example.com/graphql', 200, '', undefined, 'application/graphql-response+json', ''],
         ];
         for (const args of traffic) net._emit(entry(...args));
 
-        hits.push({
-          id: `h${++hitSeq}`, tabId: INSPECTED_TAB_ID, timestamp: Date.now(),
+        // A request that was already in the HAR *and* arrives live, which is
+        // what happens to anything finishing while getHAR() is in flight. It
+        // must appear exactly once.
+        net._emit(PRE_RECORDED[1]);
+
+        const reportHit = (hit) => {
+          const record = { id: `h${++hitSeq}`, tabId: INSPECTED_TAB_ID, timestamp: Date.now(), ...hit };
+          hits.push(record);
+          broadcast({ type: 'hit', hit: record });
+        };
+
+        reportHit({
           method: 'POST', url: 'https://stable-tempo.example.com/api/helpshift/v1/article/tempo',
           outcome: 'mocked', mockId: 'm5', path: 'Web-edge-API / Jukeboxes / Settings / Save Settings',
           label: 'evalx', status: 200,
         });
-        broadcast({ type: 'hit', hit: hits[hits.length - 1] });
+
+        // The bug this pairing exists for. DevTools reported the CORS preflight
+        // (above, in `traffic`) but never the GET that caused it — so without the
+        // interceptor's own record the log would show an OPTIONS row and nothing
+        // else, which is exactly what it did.
+        reportHit({
+          method: 'GET',
+          url: 'https://stable-jukebox-main.example.com/v2/jukeboxes/state/current',
+          outcome: 'passed',
+          status: 200,
+        });
+
+        // These two DevTools also reported, so each must be listed once, not
+        // twice — the interceptor and DevTools both saw them.
+        reportHit({ method: 'GET', url: 'https://jenkins.example.com/view/job/PR-1/api/json', outcome: 'passed', status: 200 });
+        reportHit({ method: 'POST', url: 'https://stable.example.com/v2/jukeboxes/state/current', outcome: 'passed', status: 401 });
+
+        // A request that died at the network level: no status exists, so this is
+        // the one row that legitimately shows a dash.
+        reportHit({ method: 'GET', url: 'https://offline.example.com/v1/ping', outcome: 'passed' });
+
+        // DevTools reported this one with status 0 — blocked, or captured before
+        // it answered — while the interceptor got the real 200. The merged row
+        // must show 200, not a dash.
+        net._emit(entry('GET', 'https://half-reported.example.com/v1/items', 0, '', 'xhr', 'application/json'));
+        reportHit({ method: 'GET', url: 'https://half-reported.example.com/v1/items', outcome: 'passed', status: 200 });
+
         broadcast({ type: 'bridge-status', connected: true });
       }, 300);
     </script>

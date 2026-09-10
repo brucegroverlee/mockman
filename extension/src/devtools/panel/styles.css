@@ -929,6 +929,35 @@ button.link:hover {
   background: none;
 }
 
+.link.preflights {
+  font-size: 11px;
+  color: var(--muted);
+  text-decoration: none;
+  border-bottom: 1px dotted currentColor;
+  flex: none;
+  white-space: nowrap;
+}
+
+.link.preflights:hover {
+  color: var(--accent);
+}
+
+.boundary {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 12px;
+  overflow: auto;
+  color: var(--error);
+}
+
+.boundary code {
+  color: var(--fg);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .log-rows {
   flex: 1;
   min-height: 0;
@@ -974,9 +1003,37 @@ button.link:hover {
   color: var(--mocked);
 }
 
+/*
+ * The resource-type column.
+ *
+ * Fixed width so the method, status and url columns line up down the log — a
+ * ragged left edge is what makes a dense list hard to scan. "Manifest" is the
+ * longest label and sets the width.
+ */
+.log-type {
+  font-size: 10px;
+  color: var(--muted);
+  width: 56px;
+  flex: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Only the bucket this extension can act on is drawn at full strength; the rest
+   are context, and dimming them keeps the eye on the actionable rows. */
+.log-type.c-fetch-xhr {
+  color: var(--accent);
+}
+
 .log-row .status {
   font-variant-numeric: tabular-nums;
+  width: 24px;
+  text-align: right;
   flex: none;
+}
+
+.log-row .status.unknown {
+  color: var(--muted);
 }
 
 .log-row .via {

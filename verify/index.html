@@ -286,6 +286,50 @@
           hits.some((h) => h.outcome === 'mocked' && h.path === 'test / m1'),
           JSON.stringify(hits.filter((h) => h.outcome === 'mocked').map((h) => h.path)),
         );
+        // --- cross-origin, with a real CORS preflight ---
+        // The page is on 127.0.0.1, so localhost is a different origin. The
+        // custom header forces the browser to send an OPTIONS preflight first —
+        // the exact shape of a real app calling its API on another port, and the
+        // one where the interceptor must still come back with a status.
+        const CROSS = `http://localhost:${location.port}`;
+        const xo = await fetch(`${CROSS}/api/cors`, { headers: { 'x-force-preflight': '1' } });
+        check('cross-origin passthrough: reaches the network', (await xo.json()).crossOrigin === true, xo.status);
+        check('cross-origin passthrough: status visible to the page', xo.status === 200, xo.status);
+
+        const xoHit = hits.find((h) => h.url.includes('/api/cors') && !h.url.includes('404') && h.outcome === 'passed');
+        check('cross-origin passed hit carries its status', xoHit?.status === 200, JSON.stringify(xoHit));
+        check('cross-origin passed hit is not logged as OPTIONS', xoHit?.method === 'GET', JSON.stringify(xoHit));
+
+        const xo404 = await fetch(`${CROSS}/api/cors-404`, {
+          method: 'POST',
+          headers: { 'x-force-preflight': '1', 'content-type': 'application/json' },
+          body: '{}',
+        });
+        const xo404Hit = hits.find((h) => h.url.includes('/api/cors-404') && h.outcome === 'passed');
+        check('cross-origin POST hit carries a non-200 status', xo404Hit?.status === 404, JSON.stringify(xo404Hit));
+        check('cross-origin POST hit keeps its method', xo404Hit?.method === 'POST', JSON.stringify(xo404Hit));
+        void xo404;
+
+        // A passed hit must carry the real response status. The panel lists
+        // these rows beside ones DevTools reported, so a missing status shows up
+        // as a blank column next to populated ones.
+        const passedReal = hits.find((h) => h.outcome === 'passed' && h.url.includes('/api/real'));
+        check('passed hits carry the real status', passedReal?.status === 200, JSON.stringify(passedReal));
+
+        const passed404 = hits.find((h) => h.outcome === 'passed' && h.url.includes('/api/method-test'));
+        check('passed hits carry a non-200 status too', passed404?.status === 404, JSON.stringify(passed404));
+
+        const passedXhr = hits.find((h) => h.outcome === 'passed' && h.url.includes('/api/xhr-real'));
+        check('passed XHR hits carry their status', passedXhr?.status === 201, JSON.stringify(passedXhr));
+
+        // Timestamped when the request went out, not when it came back — the
+        // panel pairs these against DevTools entries within a few seconds.
+        check(
+          'a passed hit is timestamped at request time',
+          passedReal !== undefined && passedReal.timestamp <= Date.now() && Date.now() - passedReal.timestamp < 60000,
+          String(passedReal?.timestamp),
+        );
+
         check(
           'hits reported for passed requests',
           hits.some((h) => h.outcome === 'passed' && h.url.includes('/api/real')),

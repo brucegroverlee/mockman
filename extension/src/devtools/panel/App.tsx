@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { findNode, isFolder, setEnabled } from '@network-mock/shared';
 
 import { Detail } from './Detail.tsx';
+import { ErrorBoundary } from './ErrorBoundary.tsx';
 import { HitLog } from './HitLog.tsx';
 import { Tree } from './Tree.tsx';
 import { useBridgeStatus, useTabTargeting, useWorkspace } from './messaging.ts';
@@ -97,22 +98,28 @@ export function App(): React.JSX.Element {
         </span>
       </header>
 
+      {/* Each pane is isolated: a mock with a shape this build does not expect
+          should break its own editor, not take the tree and the log with it. */}
       <SplitBody
         left={
-          <Tree
-            workspace={workspace}
-            update={update}
-            selectedId={selectedId}
-            onSelect={setSelectedId}
-          />
+          <ErrorBoundary area="tree">
+            <Tree
+              workspace={workspace}
+              update={update}
+              selectedId={selectedId}
+              onSelect={setSelectedId}
+            />
+          </ErrorBoundary>
         }
         right={
-          <Detail
-            workspace={workspace}
-            selectedId={selectedId}
-            update={update}
-            onSelect={setSelectedId}
-          />
+          <ErrorBoundary area="editor">
+            <Detail
+              workspace={workspace}
+              selectedId={selectedId}
+              update={update}
+              onSelect={setSelectedId}
+            />
+          </ErrorBoundary>
         }
       />
 
@@ -125,12 +132,14 @@ export function App(): React.JSX.Element {
         onDoubleClick={log.reset}
       />
 
-      <HitLog
-        workspace={workspace}
-        update={update}
-        targetFolderId={selectedFolderId}
-        onCreated={setSelectedId}
-      />
+      <ErrorBoundary area="hit log">
+        <HitLog
+          workspace={workspace}
+          update={update}
+          targetFolderId={selectedFolderId}
+          onCreated={setSelectedId}
+        />
+      </ErrorBoundary>
     </div>
   );
 }

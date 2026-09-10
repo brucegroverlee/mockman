@@ -144,8 +144,45 @@ sources, because neither is enough alone:
   tab made *and* its full response — which is what lets the **mock it** button
   pre-fill a new mock from what actually came back.
 
+The interceptor's `passed` records are used too, and this matters more than it sounds.
+The two sources see genuinely different things:
+
+- **DevTools** reports what the *network stack* did. It has the response, and it covers
+  every resource type — but a CORS preflight is a first-class row here, and a request
+  answered from the **memory cache** is not reported at all.
+- **The interceptor** reports what the *page* asked for. It patched `fetch`, `XHR` and
+  `EventSource` itself, so it cannot miss a call and always has the true method. It
+  reports a passed request once the response arrives, so it carries the status too —
+  but timestamped when the request went out, since that is what the pairing below
+  matches on and what the log sorts by.
+
+Relying on DevTools alone produced a log full of `OPTIONS` preflights with none of the
+`GET`s that caused them. So entries from the two are **paired** — matched on method and
+url within a few seconds, since neither carries a request id — and each request is
+listed once. A DevTools entry always wins the pairing, because it is the one carrying
+the response *body* — a request only the interceptor saw still shows its status, but
+**mock it** on that row starts with an empty body.
+
+A `–` in the status column means there is genuinely no status: the request failed at
+the network level, or it is an `EventSource` stream rather than a request that
+completes.
+
+The DevTools source is itself two calls. `onRequestFinished` only reports what happens
+*from now on*, so a panel opened after browsing for a while would show an almost-empty
+log while Chrome's own Network panel was full. `getHAR()` returns what DevTools has
+already recorded, so the log opens with the same history the Network panel is showing
+and the listener takes it from there; the two are deduplicated on start time, method
+and url.
+
 Both sources are scoped to the inspected tab, so the log only ever shows the tab you
 opened the panel on. Over MCP, `get_hit_log` returns the same records.
+
+**CORS preflights are hidden by default.** The `OPTIONS` the browser sends before a
+cross-origin call is not something the page asked for or can mock, and an API needing
+CORS emits one per call — so they double the length of the log with rows nobody can act
+on. The header says how many are hidden and gives them back in one click; the setting
+is remembered. A *mocked* `OPTIONS` is never hidden, since hiding the proof that your
+own mock fired would be perverse.
 
 Its filter bar mirrors Chrome's Network panel — same buckets, same wording, and the
 same click behaviour (a plain click picks one type, ctrl/cmd-click adds or removes
@@ -155,10 +192,32 @@ can mock; everything else in the log is page furniture you cannot act on from he
 to answer "what *else* is this page doing?". The "Mocked only" checkbox is a separate
 outcome switch and is deliberately not inverted along with them.
 
-Buckets come from Chrome's `_resourceType` on each HAR entry, falling back to the mime
-type when it is absent. Mocked rows are always Fetch/XHR, and that is not a guess: the
-interceptor patches exactly three APIs, so anything mocked was an API call by
-construction.
+Buckets come from Chrome's `_resourceType` on each HAR entry. Three mappings are
+judgement calls rather than transcription, and all three exist to keep the default
+filter useful:
+
+- **`preflight` counts as Fetch/XHR.** The CORS `OPTIONS` Chrome sends ahead of a
+  cross-origin call is its own resource type with no body at all. An API that needs
+  CORS can emit more preflights than real calls, so filing them under "Other" empties
+  the default filter of exactly the traffic you came to look at.
+- **`eventsource` counts as Fetch/XHR**, being one of the three APIs this extension
+  can mock.
+- **`texttrack` counts as Media.**
+
+A type Chrome reports that this build does not recognise falls through to a mime-type
+heuristic rather than dropping straight into "Other" — Chrome adds resource types over
+time, and an unrecognised one carrying `application/json` is API traffic whatever it
+is called. The heuristic reads `content.mimeType`, then the `content-type` header,
+which matters for bodiless responses where the former is empty.
+
+Mocked rows are always Fetch/XHR, and that is not a guess: the interceptor patches
+exactly three APIs, so anything mocked was an API call by construction.
+
+Each row reads `outcome · type · method · status · url`. The type column carries the
+bucket, so an `OPTIONS` preflight sitting under Fetch/XHR reads as deliberate rather
+than as a mistake; hovering it names the exact resource type Chrome reported. Fetch/XHR
+is drawn in the accent colour and the rest are dimmed, since that bucket is the only
+one this extension can act on.
 
 If you are wondering whether a mock fired, the hit log is where to look — never the
 Network panel.

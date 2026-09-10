@@ -144,8 +144,33 @@ async function applyDelay(mock: CompiledMock): Promise<void> {
   if (delay > 0) await sleep(delay);
 }
 
-function reportPassed(method: string, url: string): void {
-  report({ timestamp: Date.now(), method, url, outcome: 'passed' });
+/**
+ * Reports a request that reached the real network.
+ *
+ * Called *after* the response arrives, so the status can be included — the panel
+ * shows these rows next to ones DevTools reported, and a blank status column
+ * beside a populated one reads as a bug. `startedAt` is therefore passed in
+ * explicitly: the row must be timestamped when the request went out, not when it
+ * came back, or it would sort away from its neighbours and drift outside the
+ * window the panel uses to pair the two sources up.
+ *
+ * A status of 0 means the request failed outright (network error, abort), which
+ * is not a status anyone can act on, so it is left off.
+ */
+function reportPassed(
+  method: string,
+  url: string,
+  startedAt: number,
+  status?: number,
+): void {
+  const hit: Omit<HitRecord, 'id' | 'tabId'> = {
+    timestamp: startedAt,
+    method,
+    url,
+    outcome: 'passed',
+  };
+  if (status !== undefined && status > 0) hit.status = status;
+  report(hit);
 }
 
 function reportMocked(method: string, url: string, mock: CompiledMock): void {
@@ -284,8 +309,21 @@ window.fetch = async function patchedFetch(
   // never actually answered.
   const response = mock ? buildResponse(mock, url) : null;
   if (!mock || !response) {
-    reportPassed(method, url);
-    return originalFetch.call(window, input as RequestInfo, init);
+    // Reported once the real response is in, so the hit carries its status. The
+    // caller sees no difference: this awaits exactly the promise it would have
+    // been handed, and the report is dispatched before it is handed back.
+    const startedAt = Date.now();
+    try {
+      const real = await originalFetch.call(window, input as RequestInfo, init);
+      reportPassed(method, url, startedAt, real.status);
+      return real;
+    } catch (error) {
+      // A network-level failure still belongs in the log — knowing the request
+      // was attempted and died is exactly what you need when a mock's pattern
+      // did not match and you are wondering where the call went.
+      reportPassed(method, url, startedAt);
+      throw error;
+    }
   }
 
   reportMocked(method, url, mock);
@@ -342,8 +380,15 @@ XhrProto.send = function patchedSend(this: XMLHttpRequest, body?: Document | XML
   if (!state.async) {
     const mock = settled ? findMock(request) : null;
     if (!mock) {
-      reportPassed(state.method, state.url);
-      return originalSend.call(this, body ?? null);
+      // Synchronous XHR has its status ready the moment send() returns, so no
+      // listener is needed. `finally` so a throwing send is still logged.
+      const startedAt = Date.now();
+      try {
+        originalSend.call(this, body ?? null);
+      } finally {
+        reportPassed(state.method, state.url, startedAt, this.status);
+      }
+      return;
     }
     reportMocked(state.method, state.url, mock);
     // A delay is impossible here: the caller is blocking on send() returning,
@@ -355,7 +400,14 @@ XhrProto.send = function patchedSend(this: XMLHttpRequest, body?: Document | XML
   void ready.then(() => {
     const mock = findMock(request);
     if (!mock) {
-      reportPassed(state.method, state.url);
+      // `loadend` is the one event that fires for success, failure and abort
+      // alike, so the request is logged exactly once however it ends.
+      const startedAt = Date.now();
+      const onDone = (): void => {
+        this.removeEventListener('loadend', onDone);
+        reportPassed(state.method, state.url, startedAt, this.status);
+      };
+      this.addEventListener('loadend', onDone);
       originalSend.call(this, body ?? null);
       return;
     }
@@ -561,7 +613,9 @@ if (typeof OriginalEventSource === 'function') {
     // arrived — true for anything created after page load, which is the norm.
     const mock = settled ? findMock({ method: 'GET', url: absolute }) : null;
     if (!mock) {
-      reportPassed('GET', absolute);
+      // No status: an EventSource is a long-lived stream, not a request that
+      // completes with one. The panel shows a dash for it.
+      reportPassed('GET', absolute, Date.now());
       return new OriginalEventSource(url, init);
     }
     reportMocked('GET', absolute, mock);

@@ -124,27 +124,31 @@ export function useWorkspace(): { workspace: Workspace | null; update: Update } 
 }
 
 /**
- * Mocked requests seen on the inspected tab.
+ * Every request the interceptor saw on the inspected tab, mocked or passed.
  *
- * Only `mocked` outcomes are kept. Requests that passed through reached the real
- * network, so `chrome.devtools.network` already knows about them in far more
- * detail (including the response body, which is what makes "mock it" useful) —
- * see useNetworkLog. Taking passed rows from both sources would just duplicate
- * every one of them.
+ * This is the authoritative record of what the *page* asked for. The interceptor
+ * patched `fetch`, `XMLHttpRequest` and `EventSource` itself, so it cannot miss
+ * one and it always knows the true method — unlike `chrome.devtools.network`,
+ * which reports what the *network stack* did and can therefore show a CORS
+ * preflight without the request that caused it.
+ *
+ * Passed hits used to be dropped here on the assumption that DevTools would
+ * always have them. It does not always, so both are kept now and `useNetworkLog`
+ * pairs them up.
  */
-export function useMockedHits(limit = 200): { hits: HitRecord[]; clear: () => Promise<void> } {
+export function usePageHits(limit = 300): { hits: HitRecord[]; clear: () => Promise<void> } {
   const [hits, setHits] = useState<HitRecord[]>([]);
 
   useEffect(() => {
     void (async () => {
       const reply = await send({ type: 'get-hits', tabId: inspectedTabId, limit });
-      if (reply.type === 'hits') setHits(reply.hits.filter((hit) => hit.outcome === 'mocked'));
+      if (reply.type === 'hits') setHits(reply.hits);
     })();
 
     const listener = (message: WorkerBroadcast): void => {
       if (message?.type !== 'hit') return;
       const { hit } = message;
-      if (hit.tabId !== inspectedTabId || hit.outcome !== 'mocked') return;
+      if (hit.tabId !== inspectedTabId) return;
       setHits((previous) => [...previous, hit].slice(-limit));
     };
     chrome.runtime.onMessage.addListener(listener);

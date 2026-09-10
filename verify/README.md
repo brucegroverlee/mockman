@@ -92,6 +92,15 @@ as `fetch` (which must still land under **Wasm**, since that bucket goes by mime
 It is a harness for eyeballing and smoke-testing, not a substitute for the manual pass
 below.
 
+Two query parameters make the DevTools API misbehave on purpose. **Check both after
+touching `network.ts`** — the failure they model is a log that captures nothing at
+all, which is invisible until someone reports it:
+
+| URL | Models | Must still |
+|---|---|---|
+| `panel.html?har=throw` | `getHAR()` throwing | capture live traffic — seeding is a nicety, subscribing is not |
+| `panel.html?har=junk` | malformed HAR entries | drop the bad entries and keep the rest |
+
 ## What these do not cover
 
 The panel **inside real DevTools** is still not automated — in particular the panel

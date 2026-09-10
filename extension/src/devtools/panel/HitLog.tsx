@@ -1,8 +1,8 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createFolder, createMock, findFolder, findNode } from '@network-mock/shared';
 import type { HttpMethod, Workspace } from '@network-mock/shared';
 
-import { useNetworkLog } from './network.ts';
+import { isPreflight, useNetworkLog } from './network.ts';
 import type { LogEntry, PassedEntry } from './network.ts';
 import type { Update } from './messaging.ts';
 import { DEFAULT_LOG_CATEGORY, LOG_CATEGORIES, statusClass } from './labels.ts';
@@ -16,6 +16,10 @@ import { readStored, writeStored } from './storage.ts';
  * so there is nothing to filter and no way for another tab's traffic to appear
  * here.
  *
+ * Rows are listed oldest first, newest at the bottom, the way Chrome's own
+ * Network panel lists them, and the list follows the newest row unless the user
+ * has scrolled up.
+ *
  * Rows that reached the real network carry a "mock it" button, which captures
  * the response as it actually was and drops a ready-made mock into the tree.
  * That is the fastest path from "I can see the request" to "I control the
@@ -28,6 +32,7 @@ const CAPTURE_FOLDER = 'Captured';
 
 const CATEGORY_KEY = 'network-mock:log-categories';
 const INVERT_KEY = 'network-mock:log-invert';
+const PREFLIGHT_KEY = 'network-mock:log-preflights';
 
 /**
  * The resource-type chips and the Invert switch.
@@ -123,16 +128,34 @@ export function HitLog({
   targetFolderId: string | null;
   onCreated: (mockId: string) => void;
 }): React.JSX.Element {
-  const { entries, clear, counts } = useNetworkLog();
+  const { entries, clear } = useNetworkLog();
   const [filter, setFilter] = useState('');
   const [onlyMocked, setOnlyMocked] = useState(false);
   const [capturing, setCapturing] = useState<string | null>(null);
   const { categories, invert, setInvert, toggleCategory, showAll } = useLogFilter();
+  const [showPreflights, setShowPreflights] = useState(() => readStored(PREFLIGHT_KEY) === 'true');
+
+  const preflightCount = useMemo(() => entries.filter(isPreflight).length, [entries]);
+
+  /** Everything the log is *about*, before the search box and type chips. */
+  const relevant = useMemo(
+    () => (showPreflights ? entries : entries.filter((entry) => !isPreflight(entry))),
+    [entries, showPreflights],
+  );
+
+  // Counted off `relevant` so the header describes the rows actually listed.
+  const counts = useMemo(
+    () => ({
+      mocked: relevant.filter((e) => e.kind === 'mocked').length,
+      passed: relevant.filter((e) => e.kind === 'passed').length,
+    }),
+    [relevant],
+  );
 
   const visible = useMemo(() => {
     const needle = filter.trim().toLowerCase();
 
-    return entries.filter((entry) => {
+    return relevant.filter((entry) => {
       // "Mocked only" is an outcome switch, not part of "the filter", so Invert
       // does not touch it — same as Chrome, where Invert flips the query and the
       // type chips but not the other toggles.
@@ -146,7 +169,24 @@ export function HitLog({
 
       return invert ? !(matchesType && matchesText) : matchesType && matchesText;
     });
-  }, [entries, filter, onlyMocked, categories, invert]);
+  }, [relevant, filter, onlyMocked, categories, invert]);
+
+  /*
+   * Follow the newest row, which is now the bottom one.
+   *
+   * "Stuck" is remembered rather than recomputed after the rows change, because
+   * appending a row is itself what moves the list away from the bottom: by the
+   * time the effect runs, a list that *was* at the bottom no longer is. Scrolling
+   * up to read something clears it, so the log never yanks the view out from
+   * under the user.
+   */
+  const rowsRef = useRef<HTMLDivElement | null>(null);
+  const stuckToBottom = useRef(true);
+
+  useEffect(() => {
+    const el = rowsRef.current;
+    if (el && stuckToBottom.current) el.scrollTop = el.scrollHeight;
+  }, [visible]);
 
   const capture = async (entry: PassedEntry): Promise<void> => {
     setCapturing(entry.key);
@@ -208,6 +248,27 @@ export function HitLog({
           <span className="badge mocked">{counts.mocked}</span> mocked
           <span className="badge passed">{counts.passed}</span> passed
         </span>
+
+        {/* Never hide rows silently: say how many and offer them back. */}
+        {preflightCount > 0 && (
+          <button
+            className="link preflights"
+            title={
+              showPreflights
+                ? 'Hide the CORS OPTIONS requests the browser sends on the page’s behalf'
+                : 'Show the CORS OPTIONS requests the browser sends on the page’s behalf'
+            }
+            onClick={() => {
+              const next = !showPreflights;
+              setShowPreflights(next);
+              writeStored(PREFLIGHT_KEY, next);
+            }}
+          >
+            {showPreflights
+              ? 'hide preflights'
+              : `${preflightCount} preflight${preflightCount === 1 ? '' : 's'} hidden`}
+          </button>
+        )}
         <input
           className="log-filter"
           value={filter}
@@ -270,7 +331,16 @@ export function HitLog({
         </label>
       </div>
 
-      <div className="log-rows">
+      <div
+        className="log-rows"
+        ref={rowsRef}
+        onScroll={() => {
+          const el = rowsRef.current;
+          // A few pixels of slack: fractional scroll heights mean an exact
+          // comparison can miss the bottom by a sub-pixel and stop following.
+          if (el) stuckToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 4;
+        }}
+      >
         {visible.length === 0 && (
           <p className="empty">
             {entries.length === 0 ? (
@@ -301,6 +371,38 @@ export function HitLog({
   );
 }
 
+function categoryLabel(entry: LogEntry): string {
+  return LOG_CATEGORIES.find((c) => c.id === entry.category)?.label ?? entry.category;
+}
+
+/**
+ * What the type column says on hover.
+ *
+ * The column shows the bucket, matching the filter chip above it; the tooltip
+ * adds Chrome's own name for the resource, which is the finer-grained answer —
+ * and the one that explains an `OPTIONS` row sitting under Fetch/XHR.
+ */
+function describeCategory(entry: LogEntry): string {
+  const label = categoryLabel(entry);
+  if (entry.kind === 'mocked') return `${label} — mocked, so it never reached the network`;
+
+  const seenBy =
+    entry.source === 'devtools'
+      ? 'Seen by DevTools'
+      : 'Seen by the page interceptor only — DevTools did not report it';
+  return entry.resourceType
+    ? `${label} — Chrome reports this as "${entry.resourceType}"\n${seenBy}`
+    : `${label}\n${seenBy}`;
+}
+
+/** Why a row has no status, which differs by where the row came from. */
+function describeMissingStatus(entry: LogEntry): string {
+  if (entry.kind === 'mocked') return 'This mock defines no status';
+  return entry.source === 'devtools'
+    ? 'DevTools reported no status for this request — it was blocked or failed before responding'
+    : 'The interceptor saw this request but got no status back — it failed at the network level, or is a stream';
+}
+
 function Row({
   entry,
   busy,
@@ -324,10 +426,21 @@ function Row({
   return (
     <div className={`log-row ${mocked ? 'mocked' : 'passed'}`}>
       <span className={`badge ${mocked ? 'mocked' : 'passed'}`}>{mocked ? 'MOCKED' : 'passed'}</span>
+      {/* Shown, not just filtered on: without it an OPTIONS preflight sitting
+          under Fetch/XHR looks like a mistake. Hovering names the exact resource
+          type Chrome reported. */}
+      <span className={`log-type c-${entry.category}`} title={describeCategory(entry)}>
+        {categoryLabel(entry)}
+      </span>
       <span className="method">{entry.method}</span>
-      {entry.status !== undefined && (
-        <span className={`status ${statusClass(entry.status)}`}>{entry.status}</span>
-      )}
+      {/* Always rendered, so the url column starts at the same x on every row.
+          A dash means the response was never observed — see toInterceptedEntry. */}
+      <span
+        className={`status ${entry.status === undefined ? 'unknown' : statusClass(entry.status)}`}
+        title={entry.status === undefined ? describeMissingStatus(entry) : undefined}
+      >
+        {entry.status ?? '–'}
+      </span>
       <span className="url" title={entry.url}>
         {entry.url}
       </span>
@@ -347,7 +460,11 @@ function Row({
       ) : (
         <button
           className="mock-it"
-          title="Create a mock from this request, pre-filled with the response it actually returned"
+          title={
+            entry.bodyAvailable
+              ? 'Create a mock from this request, pre-filled with the response it actually returned'
+              : 'Create a mock from this request. DevTools did not record the response, so the body starts empty'
+          }
           disabled={busy}
           onClick={() => void onCapture(entry)}
         >
