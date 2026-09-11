@@ -18,8 +18,8 @@ import {
   setAllExpanded,
   setEnabled,
   setExpanded,
-} from '@network-mock/shared';
-import type { Folder, Tag, TreeNode, Workspace } from '@network-mock/shared';
+} from '@mockman/shared';
+import type { Folder, Tag, TreeNode, Workspace } from '@mockman/shared';
 
 import { inspectedTabId } from './messaging.ts';
 import type { Update } from './messaging.ts';

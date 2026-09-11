@@ -1,5 +1,5 @@
 /**
- * Entry point for the Network Mock MCP server.
+ * Entry point for the Mockman MCP server.
  *
  * Vendor-neutral: it speaks the open protocol over the two standard transports
  * and makes no assumptions about which client is on the other end. Claude Code,
@@ -20,7 +20,7 @@ import { Bridge } from './bridge.ts';
 import { guardStdout, log, setLogLevel, type LogLevel } from './logger.ts';
 import { registerTools } from './tools.ts';
 
-const NAME = 'network-mock';
+const NAME = 'mockman';
 const VERSION = '0.1.0';
 
 interface Options {

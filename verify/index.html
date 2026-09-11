@@ -5,7 +5,7 @@
     <title>pending</title>
   </head>
   <body>
-    <h1>Network Mock — interception engine verification</h1>
+    <h1>Mockman — interception engine verification</h1>
     <pre id="out">running…</pre>
 
     <!-- The real built artefact, loaded exactly as a MAIN-world content script would be. -->
@@ -20,7 +20,7 @@
         match: { method: 'GET', urlPattern: '*/api/users*', patternKind: 'glob' },
         response: {
           status: 200,
-          headers: { 'x-mocked-by': 'network-mock' },
+          headers: { 'x-mocked-by': 'mockman' },
           body: '{"mocked":true}',
           bodyKind: 'json',
           delayMs: 0,
@@ -111,9 +111,9 @@
       };
 
       const hits = [];
-      document.addEventListener('network-mock:hit', (e) => hits.push(e.detail.hit));
+      document.addEventListener('mockman:hit', (e) => hits.push(e.detail.hit));
       document.dispatchEvent(
-        new CustomEvent('network-mock:config', { detail: { config } }),
+        new CustomEvent('mockman:config', { detail: { config } }),
       );
 
       const results = [];
@@ -150,7 +150,7 @@
         check('fetch mocked: body substituted', b1.mocked === true, JSON.stringify(b1));
         check(
           'fetch mocked: custom header present',
-          r1.headers.get('x-mocked-by') === 'network-mock',
+          r1.headers.get('x-mocked-by') === 'mockman',
           r1.headers.get('x-mocked-by'),
         );
         check(

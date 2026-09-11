@@ -108,7 +108,7 @@ port that targets the inspected tab, which has no analogue outside a real DevToo
 session. The manual pass:
 
 1. Load `extension/dist` at `chrome://extensions`, open a page that calls `fetch`,
-   open the **Network Mock** panel.
+   open the **Mockman** panel.
 2. Add a folder and a mock, reload — the Hit log should show `MOCKED`. Note that you
    never had to target the tab: opening the panel did it.
 3. **Close the DevTools window** and reload the page. Nothing should be mocked. Reopen

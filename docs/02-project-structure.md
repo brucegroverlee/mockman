@@ -1,7 +1,7 @@
 # 02 — Project structure
 
 ```
-network-mock/
+mockman/
 ├─ package.json              # root scripts, Node pin (devEngines), pnpm pin (packageManager)
 ├─ pnpm-workspace.yaml       # which folders are packages + allowBuilds
 ├─ tsconfig.base.json        # one strict TS config, extended by each package
@@ -9,9 +9,9 @@ network-mock/
 ├─ scripts/
 │  └─ print-mcp-config.mjs   # prints client-specific MCP config with real paths
 ├─ docs/                     # you are here
-├─ shared/                   # @network-mock/shared
-├─ extension/                # @network-mock/extension  → the Chrome extension
-└─ mcp-server/               # @network-mock/mcp-server → the MCP server
+├─ shared/                   # @mockman/shared
+├─ extension/                # @mockman/extension  → the Chrome extension
+└─ mcp-server/               # @mockman/mcp-server → the MCP server
 ```
 
 ## Why three packages instead of one folder
@@ -30,7 +30,7 @@ disagreeing about what the workspace contains — a miserable bug to chase.
 When one depends on another you write:
 
 ```json
-"dependencies": { "@network-mock/shared": "workspace:*" }
+"dependencies": { "@mockman/shared": "workspace:*" }
 ```
 
 The `workspace:*` protocol means "the copy in this repo", never the registry. pnpm
@@ -39,7 +39,7 @@ links it, so an edit in `shared/` is visible immediately with no rebuild.
 Useful commands:
 
 ```bash
-pnpm --filter @network-mock/extension build
+pnpm --filter @mockman/extension build
 ```
 
 ```bash

@@ -23,7 +23,7 @@ pnpm typecheck
 Watch mode while working on the extension:
 
 ```bash
-pnpm --filter @network-mock/extension dev
+pnpm --filter @mockman/extension dev
 ```
 
 Then reload the extension in Chrome after each rebuild (see below).
@@ -80,7 +80,7 @@ time gets lost — see [03](03-chrome-extension-primer.md#the-four-consoles).
 | Code | Console |
 |---|---|
 | `intercept.js` | Page console (F12 → Console) |
-| `relay.js` | Page console, with the **context dropdown** switched from `top` to `Network Mock` |
+| `relay.js` | Page console, with the **context dropdown** switched from `top` to `Mockman` |
 | Service worker | `chrome://extensions` → **Service worker** link |
 | Panel | Undock DevTools, then F12 **on the DevTools window** |
 
@@ -89,7 +89,7 @@ time gets lost — see [03](03-chrome-extension-primer.md#the-four-consoles).
 `shared/` has unit tests for the pure logic — matching and the enablement rules:
 
 ```bash
-pnpm --filter @network-mock/shared test
+pnpm --filter @mockman/shared test
 ```
 
 These run TypeScript **directly**, with no build step: Node 24 strips types natively,
@@ -104,7 +104,7 @@ cheap to cover, and both are places where a subtle mistake produces a confusing
 Protocol compliance can be checked with the official inspector, no vendor involved:
 
 ```bash
-pnpm --filter @network-mock/mcp-server exec mcp-inspector node ./dist/index.js
+pnpm --filter @mockman/mcp-server exec mcp-inspector node ./dist/index.js
 ```
 
 Confirm the handshake succeeds, every tool lists with a full schema, and calls return
@@ -121,7 +121,7 @@ Two things specifically worth re-checking if you touch the server:
 
 The engine can be exercised in a real browser without installing the extension at
 all: serve `extension/dist` over http, load `dist/injected/intercept.js` into a plain
-page, dispatch a `network-mock:config` CustomEvent with some mocks, then assert on
+page, dispatch a `mockman:config` CustomEvent with some mocks, then assert on
 `fetch` and XHR behaviour.
 
 This is the cheapest way to test the delicate parts — the XHR event ordering, the

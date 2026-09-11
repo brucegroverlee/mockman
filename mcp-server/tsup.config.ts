@@ -6,7 +6,7 @@ import { defineConfig } from 'tsup';
  * matters more than usual on Windows, where clients spawn without a shell and
  * cannot execute `.cmd` shims.
  *
- * `@network-mock/shared` is consumed as TypeScript source and gets inlined here.
+ * `@mockman/shared` is consumed as TypeScript source and gets inlined here.
  */
 export default defineConfig({
   entry: { index: 'src/index.ts' },
@@ -16,6 +16,6 @@ export default defineConfig({
   sourcemap: true,
   clean: true,
   // Keep real dependencies external; only the workspace package is inlined.
-  noExternal: [/^@network-mock\//],
+  noExternal: [/^@mockman\//],
   banner: { js: '#!/usr/bin/env node' },
 });

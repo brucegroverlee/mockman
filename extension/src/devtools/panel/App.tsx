@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { findNode, isFolder, setEnabled } from '@network-mock/shared';
+import { findNode, isFolder, setEnabled } from '@mockman/shared';
 
 import { Detail } from './Detail.tsx';
 import { ErrorBoundary } from './ErrorBoundary.tsx';
@@ -149,12 +149,12 @@ export function App(): React.JSX.Element {
 }
 
 /** Pane sizes in a DevTools panel are personal; remember the last ones. */
-const WIDTH_KEY = 'network-mock:tree-width';
+const WIDTH_KEY = 'mockman:tree-width';
 const WIDTH_DEFAULT = 260;
 const MIN_WIDTH = 160;
 const MAX_WIDTH = 640;
 
-const LOG_KEY = 'network-mock:log-height';
+const LOG_KEY = 'mockman:log-height';
 const LOG_DEFAULT = 160;
 const LOG_MIN = 56;
 /** Never let the log squeeze the tree and editor below this. */

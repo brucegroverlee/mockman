@@ -2,7 +2,7 @@
 <html>
   <head>
     <meta charset="utf-8" />
-    <title>Network Mock — panel harness</title>
+    <title>Mockman — panel harness</title>
     <style>
       html, body { height: 100%; margin: 0; }
       #root { height: 100%; }
@@ -56,7 +56,7 @@
                   label: 'evalx',
                   tagIds: ['tag_a'],
                   response: {
-                    status: 200, headers: { 'x-via': 'network-mock' },
+                    status: 200, headers: { 'x-via': 'mockman' },
                     body: JSON.stringify({ 'tempo-uptime-score': { flagVersion: 34, value: true, variation: 0 } }, null, 2),
                     bodyKind: 'json', delayMs: 0,
                   },

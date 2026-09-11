@@ -21,11 +21,11 @@ import type { CapturedResponse, HitRecord, TabConfig, Workspace } from './types.
  */
 export const PAGE_EVENT = {
   /** MAIN → ISOLATED: interceptor loaded, asking for config. */
-  ready: 'network-mock:ready',
+  ready: 'mockman:ready',
   /** ISOLATED → MAIN: here is the config (also sent on every later change). */
-  config: 'network-mock:config',
+  config: 'mockman:config',
   /** MAIN → ISOLATED: a request was mocked or passed through. */
-  hit: 'network-mock:hit',
+  hit: 'mockman:hit',
   /**
    * MAIN → ISOLATED: here is the response body for a hit reported earlier.
    *
@@ -35,7 +35,7 @@ export const PAGE_EVENT = {
    * every row out of the log until its body finished — so the row goes out
    * immediately and the body follows, matched up by `bodyKey`.
    */
-  body: 'network-mock:body',
+  body: 'mockman:body',
 } as const;
 
 /**
@@ -46,7 +46,7 @@ export const PAGE_EVENT = {
  * not do this, because a DevTools window can be closed without ever getting a
  * chance to send anything.
  */
-export const PANEL_PORT = 'network-mock:panel';
+export const PANEL_PORT = 'mockman:panel';
 
 /** The first and only message the panel sends over {@link PANEL_PORT}. */
 export interface PanelHello {

@@ -1,4 +1,4 @@
-# Network Mock — documentation
+# Mockman — documentation
 
 A Chrome DevTools extension for mocking network responses, with a **nested folder
 tree**, **tags**, independent **enable/disable** at every level, **request-body
@@ -34,7 +34,7 @@ Then:
 
 1. Open `chrome://extensions` and turn on **Developer mode** (top right).
 2. Click **Load unpacked** and select `extension/dist`.
-3. Open any web page, press **F12**, and pick the **Network Mock** tab.
+3. Open any web page, press **F12**, and pick the **Mockman** tab.
 4. That tab is now being mocked, and stays so while the panel is open.
 5. Use the toolbar above the tree to add a folder and a mock, and set the URL pattern
    to something like `*/api/*`. Folders nest as deep as you like.

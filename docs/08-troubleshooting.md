@@ -9,14 +9,14 @@
 | `ERR_PNPM_IGNORED_BUILDS` | pnpm blocks dependency install scripts by default | Add the package under `allowBuilds:` in `pnpm-workspace.yaml` |
 | `pnpm setup` fails with `ENOENT ... @pnpm/exe` | It tries to reinstall the pnpm CLI into its own global store | Do not run it; set `PNPM_HOME` and PATH manually per [01](01-windows-setup.md) |
 | `pnpm runtime set node lts -g` fails with `ENOENT ... node_modules\node` | A pnpm 11.15.1 bug on Windows | Skip it. `pnpm exec node` and `pnpm run` work regardless |
-| Cannot find module `@network-mock/shared` | Workspace links missing | `pnpm install` from the **repo root** |
+| Cannot find module `@mockman/shared` | Workspace links missing | `pnpm install` from the **repo root** |
 
 ## Loading the extension
 
 | Symptom | Cause | Fix |
 |---|---|---|
 | "Manifest file is missing or unreadable" | Selected `extension/` instead of `extension/dist` | Load the **built** folder. Run `pnpm build` first |
-| No **Network Mock** tab in DevTools | DevTools was already open when the extension loaded | Close and reopen DevTools |
+| No **Mockman** tab in DevTools | DevTools was already open when the extension loaded | Close and reopen DevTools |
 | Service worker shows "inactive" | Normal — MV3 workers are event-driven and idle out | Not a fault. It wakes when messaged |
 | `Cannot use import statement outside a module` in a content script | A content script got built as an ES module | Content scripts must be IIFEs; see [07](07-development-workflow.md#why-the-extension-needs-two-bundlers) |
 
@@ -24,7 +24,7 @@
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| **Nothing is mocked at all** | A tab is targeted only while its Network Mock panel is open | Open the panel on the tab you are testing, and leave it open. Check the **Mocking on** switch too |
+| **Nothing is mocked at all** | A tab is targeted only while its Mockman panel is open | Open the panel on the tab you are testing, and leave it open. Check the **Mocking on** switch too |
 | Nothing is mocked *from an agent* | Same cause: with no panel open, no tab is targeted | Open the panel, or call `set_target_tabs` explicitly |
 | A mock looks enabled but does not fire | A **tag** on it — or on a folder above it — is disabled, which vetoes it | The greyed row shows a `!`; hover it, or call `get_status` |
 | A whole branch went inert at once | A folder above it is disabled, or carries a disabled tag | The breadcrumb in the detail pane strikes through any disabled folder |

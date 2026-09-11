@@ -1,5 +1,5 @@
 /**
- * Protocol-compliance check for the Network Mock MCP server, with no vendor client
+ * Protocol-compliance check for the Mockman MCP server, with no vendor client
  * in the loop.
  *
  * Verifies the things that actually break interoperability:
@@ -77,7 +77,7 @@ try {
   check('initialize succeeds', !!init.result, JSON.stringify(init).slice(0, 300));
   check(
     'server identifies itself',
-    init.result?.serverInfo?.name === 'network-mock',
+    init.result?.serverInfo?.name === 'mockman',
     JSON.stringify(init.result?.serverInfo),
   );
   check('negotiates a protocol version', !!init.result?.protocolVersion, init.result?.protocolVersion);
@@ -128,7 +128,7 @@ try {
     }
   });
   check('stdout carries only valid JSON-RPC', badLines.length === 0, badLines.slice(0, 3).join(' | '));
-  check('server logs to stderr', stderrText.join('').includes('network-mock'), stderrText.join('').slice(0, 200));
+  check('server logs to stderr', stderrText.join('').includes('mockman'), stderrText.join('').slice(0, 200));
 
   // --- clean exit on stdin close ---
   const exited = await new Promise((resolve) => {

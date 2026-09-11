@@ -25,7 +25,7 @@ function write(level: Exclude<LogLevel, 'silent'>, args: unknown[]): void {
   const text = args
     .map((arg) => (typeof arg === 'string' ? arg : safeStringify(arg)))
     .join(' ');
-  process.stderr.write(`[network-mock ${level}] ${text}\n`);
+  process.stderr.write(`[mockman ${level}] ${text}\n`);
 }
 
 function safeStringify(value: unknown): string {

@@ -27,7 +27,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { CapturedResponse, HitRecord } from '@network-mock/shared';
+import type { CapturedResponse, HitRecord } from '@mockman/shared';
 
 import { getCapturedBody, usePageHits } from './messaging.ts';
 import type { LogCategory } from './labels.ts';

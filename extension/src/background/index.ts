@@ -13,7 +13,7 @@
  *    nasty surprise.
  */
 
-import { PANEL_PORT, compileActiveMocks, migrateWorkspace } from '@network-mock/shared';
+import { PANEL_PORT, compileActiveMocks, migrateWorkspace } from '@mockman/shared';
 import type {
   CapturedResponse,
   FromWorker,
@@ -22,7 +22,7 @@ import type {
   ToWorker,
   Workspace,
   WorkerBroadcast,
-} from '@network-mock/shared';
+} from '@mockman/shared';
 
 import { startBridge } from './bridge.ts';
 
@@ -197,7 +197,7 @@ function recordHit(tabId: number, partial: Omit<HitRecord, 'id' | 'tabId'>): Hit
 /**
  * A panel targets its own inspected tab for as long as it is open.
  *
- * This is why targeting needs no UI: opening the Network Mock panel on a tab is
+ * This is why targeting needs no UI: opening the Mockman panel on a tab is
  * the act of choosing it. A long-lived port is the only reliable signal — a
  * DevTools window can be closed, or its whole browser window torn down, without
  * the page getting a chance to send a farewell message, but `onDisconnect`

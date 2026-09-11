@@ -144,7 +144,7 @@ export interface Workspace {
    * Only these tabs get mocked. Empty means "mock nothing".
    *
    * The panel adds its own inspected tab on open and drops it on close, so in
-   * normal use this tracks "wherever DevTools is showing the Network Mock
+   * normal use this tracks "wherever DevTools is showing the Mockman
    * panel". The MCP server can still target tabs explicitly.
    */
   targetTabIds: number[];

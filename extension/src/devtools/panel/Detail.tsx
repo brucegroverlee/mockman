@@ -10,14 +10,14 @@ import {
   renameNode,
   setNodeTags,
   updateMock,
-} from '@network-mock/shared';
+} from '@mockman/shared';
 import type {
   BodyMatchMode,
   Folder,
   HttpMethod,
   Mock,
   Workspace,
-} from '@network-mock/shared';
+} from '@mockman/shared';
 
 import { CodeEditor } from './CodeEditor.tsx';
 import { inspectedTabId } from './messaging.ts';

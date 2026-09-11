@@ -1,5 +1,5 @@
 {
-  "name": "@network-mock/extension",
+  "name": "@mockman/extension",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -19,7 +19,7 @@
     "vite": "^8.2.0"
   },
   "dependencies": {
-    "@network-mock/shared": "workspace:*",
+    "@mockman/shared": "workspace:*",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   }

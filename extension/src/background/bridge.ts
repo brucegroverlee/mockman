@@ -12,8 +12,8 @@
  * that Chrome has not yet noticed.
  */
 
-import { migrateWorkspace } from '@network-mock/shared';
-import type { HitRecord, Workspace } from '@network-mock/shared';
+import { migrateWorkspace } from '@mockman/shared';
+import type { HitRecord, Workspace } from '@mockman/shared';
 
 const DEFAULT_PORT = 8787;
 const PING_MS = 20_000;

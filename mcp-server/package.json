@@ -1,11 +1,11 @@
 {
-  "name": "@network-mock/mcp-server",
+  "name": "@mockman/mcp-server",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "description": "Vendor-neutral MCP server exposing the extension's mocking features over stdio or Streamable HTTP",
   "bin": {
-    "network-mock-mcp": "./dist/index.js"
+    "mockman-mcp": "./dist/index.js"
   },
   "scripts": {
     "build": "tsup",
@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/server": "^2.0.0",
-    "@network-mock/shared": "workspace:*",
+    "@mockman/shared": "workspace:*",
     "ws": "^8.21.1",
     "zod": "^4.4.3"
   },

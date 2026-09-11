@@ -25,7 +25,7 @@ export class ErrorBoundary extends Component<
 
   override componentDidCatch(error: Error, info: ErrorInfo): void {
     // The panel has its own console, separate from the inspected page's.
-    console.error(`[network-mock] ${this.props.area} failed to render`, error, info.componentStack);
+    console.error(`[mockman] ${this.props.area} failed to render`, error, info.componentStack);
   }
 
   override render(): ReactNode {

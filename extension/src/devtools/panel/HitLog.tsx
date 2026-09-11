@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { createFolder, createMock, findFolder } from '@network-mock/shared';
-import type { HttpMethod, Workspace } from '@network-mock/shared';
+import { createFolder, createMock, findFolder } from '@mockman/shared';
+import type { HttpMethod, Workspace } from '@mockman/shared';
 
 import { isPreflight, useNetworkLog } from './network.ts';
 import type { LogEntry, PassedEntry } from './network.ts';
@@ -35,9 +35,9 @@ import { readStored, writeStored } from './storage.ts';
 /** Where captured mocks go when no folder is selected. */
 const CAPTURE_FOLDER = 'Captured';
 
-const CATEGORY_KEY = 'network-mock:log-categories';
-const INVERT_KEY = 'network-mock:log-invert';
-const PREFLIGHT_KEY = 'network-mock:log-preflights';
+const CATEGORY_KEY = 'mockman:log-categories';
+const INVERT_KEY = 'mockman:log-invert';
+const PREFLIGHT_KEY = 'mockman:log-preflights';
 
 /**
  * The resource-type chips and the Invert switch.

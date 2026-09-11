@@ -9,7 +9,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { PANEL_PORT } from '@network-mock/shared';
+import { PANEL_PORT } from '@mockman/shared';
 import type {
   CapturedResponse,
   FromWorker,
@@ -18,7 +18,7 @@ import type {
   ToWorker,
   Workspace,
   WorkerBroadcast,
-} from '@network-mock/shared';
+} from '@mockman/shared';
 
 /** The tab this DevTools window is inspecting. Everything here is scoped to it. */
 export const inspectedTabId = chrome.devtools.inspectedWindow.tabId;
@@ -103,7 +103,7 @@ const FLUSH_DELAY_MS = 120;
  * The workspace plus a setter that writes through to the worker.
  *
  * `update` takes a function so callers compose the pure mutation helpers from
- * `@network-mock/shared` without worrying about staleness.
+ * `@mockman/shared` without worrying about staleness.
  *
  * The panel's copy is authoritative *while it is being edited*, and only then.
  * It did not start out that way: every `update` used to await a fresh read from

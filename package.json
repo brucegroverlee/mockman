@@ -1,5 +1,5 @@
 {
-  "name": "network-mock",
+  "name": "mockman",
   "version": "0.1.0",
   "private": true,
   "description": "Chrome DevTools extension for mocking network responses, with a nested folder tree, tagging, per-tab scoping and MCP access",

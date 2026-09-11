@@ -36,7 +36,7 @@ const CALL_TIMEOUT_MS = 10_000;
 export class BridgeNotConnectedError extends Error {
   constructor() {
     super(
-      'The Network Mock extension is not connected. Open Chrome, make sure the ' +
+      'The Mockman extension is not connected. Open Chrome, make sure the ' +
         'extension is loaded, then retry. (The extension dials into this server, ' +
         'so it must be running and pointed at the same port.)',
     );

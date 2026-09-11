@@ -47,18 +47,18 @@ const CLIENTS = {
   'claude-code': {
     label: 'Claude Code',
     where: '.mcp.json in the repo root (already committed), or run the command below',
-    body: `claude mcp add network-mock -- ${sh(node)} ${sh(serverPath)}
+    body: `claude mcp add mockman -- ${sh(node)} ${sh(serverPath)}
 
 Or the equivalent .mcp.json:
 
-${JSON.stringify({ mcpServers: { 'network-mock': { command: node, args: [serverPath] } } }, null, 2)}`,
+${JSON.stringify({ mcpServers: { 'mockman': { command: node, args: [serverPath] } } }, null, 2)}`,
   },
 
   cursor: {
     label: 'Cursor',
     where: '.cursor/mcp.json in the project, or ~/.cursor/mcp.json for every project',
     body: JSON.stringify(
-      { mcpServers: { 'network-mock': { command: node, args: [serverPath] } } },
+      { mcpServers: { 'mockman': { command: node, args: [serverPath] } } },
       null,
       2,
     ),
@@ -68,7 +68,7 @@ ${JSON.stringify({ mcpServers: { 'network-mock': { command: node, args: [serverP
     label: 'Windsurf',
     where: '~/.codeium/windsurf/mcp_config.json',
     body: JSON.stringify(
-      { mcpServers: { 'network-mock': { command: node, args: [serverPath] } } },
+      { mcpServers: { 'mockman': { command: node, args: [serverPath] } } },
       null,
       2,
     ),
@@ -78,7 +78,7 @@ ${JSON.stringify({ mcpServers: { 'network-mock': { command: node, args: [serverP
     label: 'Claude Desktop',
     where: '%APPDATA%\\Claude\\claude_desktop_config.json',
     body: JSON.stringify(
-      { mcpServers: { 'network-mock': { command: node, args: [serverPath] } } },
+      { mcpServers: { 'mockman': { command: node, args: [serverPath] } } },
       null,
       2,
     ),
@@ -88,7 +88,7 @@ ${JSON.stringify({ mcpServers: { 'network-mock': { command: node, args: [serverP
     label: 'Codex',
     where: '~/.codex/config.toml (or .codex/config.toml in a trusted project)',
     // Codex uses TOML and the key is mcp_servers, not mcpServers.
-    body: `[mcp_servers.network-mock]
+    body: `[mcp_servers.mockman]
 command = ${j(node)}
 args = [${j(serverPath)}]`,
   },
@@ -98,7 +98,7 @@ args = [${j(serverPath)}]`,
     where: '.vscode/mcp.json',
     // VS Code wraps under "servers", not "mcpServers".
     body: JSON.stringify(
-      { servers: { 'network-mock': { command: node, args: [serverPath] } } },
+      { servers: { 'mockman': { command: node, args: [serverPath] } } },
       null,
       2,
     ),
@@ -108,7 +108,7 @@ args = [${j(serverPath)}]`,
     label: 'Zed',
     where: 'Zed settings',
     body: JSON.stringify(
-      { context_servers: { 'network-mock': { command: { path: node, args: [serverPath] } } } },
+      { context_servers: { 'mockman': { command: { path: node, args: [serverPath] } } } },
       null,
       2,
     ),
@@ -121,10 +121,10 @@ args = [${j(serverPath)}]`,
   ${sh(node)} ${sh(serverPath)} --http
 
 Then configure:
-${JSON.stringify({ mcpServers: { 'network-mock': { url: 'http://127.0.0.1:8788' } } }, null, 2)}
+${JSON.stringify({ mcpServers: { 'mockman': { url: 'http://127.0.0.1:8788' } } }, null, 2)}
 
 Codex equivalent:
-[mcp_servers.network-mock]
+[mcp_servers.mockman]
 url = "http://127.0.0.1:8788"`,
   },
 };

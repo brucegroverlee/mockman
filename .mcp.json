@@ -1,8 +1,8 @@
 {
   "mcpServers": {
-    "network-mock": {
-      "command": "C:\\Users\\grover\\development\\network-mock\\node_modules\\.bin\\node.exe",
-      "args": ["C:\\Users\\grover\\development\\network-mock\\mcp-server\\dist\\index.js"]
+    "mockman": {
+      "command": "C:\\Users\\grover\\development\\mockman\\node_modules\\.bin\\node.exe",
+      "args": ["C:\\Users\\grover\\development\\mockman\\mcp-server\\dist\\index.js"]
     }
   }
 }

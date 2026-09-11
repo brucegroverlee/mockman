@@ -25,7 +25,7 @@ import {
   PAGE_EVENT,
   resolveCompiled,
   shouldCaptureResponse,
-} from '@network-mock/shared';
+} from '@mockman/shared';
 import type {
   BodyEventDetail,
   CapturedResponse,
@@ -34,7 +34,7 @@ import type {
   HitRecord,
   RequestInfo as MockRequestInfo,
   TabConfig,
-} from '@network-mock/shared';
+} from '@mockman/shared';
 
 /** How long to wait for the relay before giving up and passing everything through. */
 const CONFIG_TIMEOUT_MS = 2000;

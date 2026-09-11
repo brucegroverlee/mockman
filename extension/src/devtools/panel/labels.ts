@@ -1,6 +1,6 @@
 /** Human-readable strings shared by more than one component. */
 
-import type { BodyMatchMode, HttpMethod, InactiveReason } from '@network-mock/shared';
+import type { BodyMatchMode, HttpMethod, InactiveReason } from '@mockman/shared';
 
 export const METHODS: (HttpMethod | '*')[] = [
   '*',

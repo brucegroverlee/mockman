@@ -5,7 +5,7 @@
  *
  *  1. **Parity with the panel.** Anything a human can do in the DevTools panel an
  *     agent can do through these tools, and both go through the same pure
- *     mutation helpers in `@network-mock/shared`, so the two can never disagree
+ *     mutation helpers in `@mockman/shared`, so the two can never disagree
  *     about what a "create mock" means.
  *  2. **Descriptions carry the weight.** Other agents lean far harder on tool
  *     descriptions than a human reading a UI does, so each one states what it
@@ -38,8 +38,8 @@ import {
   updateMock,
   updateTag,
   walkTree,
-} from '@network-mock/shared';
-import type { HitRecord, TreeNode, Workspace } from '@network-mock/shared';
+} from '@mockman/shared';
+import type { HitRecord, TreeNode, Workspace } from '@mockman/shared';
 
 import { Bridge } from './bridge.ts';
 

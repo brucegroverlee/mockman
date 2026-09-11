@@ -52,7 +52,7 @@ A hidden page Chrome loads whenever DevTools opens. Its only job is to register 
 panel:
 
 ```js
-chrome.devtools.panels.create('Network Mock', '', 'devtools/panel.html');
+chrome.devtools.panels.create('Mockman', '', 'devtools/panel.html');
 ```
 
 The panel itself is a normal HTML page rendered inside DevTools.
@@ -101,7 +101,7 @@ the others, and looking in the wrong place makes a working system seem broken.
 | Code | Where its logs and errors appear |
 |---|---|
 | `injected/intercept.js` (MAIN) | The **page's** console (normal F12 → Console) |
-| `content/relay.js` (ISOLATED) | Also the page's console, but you must switch the **context dropdown** from `top` to `Network Mock` |
+| `content/relay.js` (ISOLATED) | Also the page's console, but you must switch the **context dropdown** from `top` to `Mockman` |
 | `background/index.js` | `chrome://extensions` → our card → **Service worker** link |
 | The DevTools panel | **Undock DevTools** into its own window, then press F12 *on that window* — DevTools for DevTools |
 

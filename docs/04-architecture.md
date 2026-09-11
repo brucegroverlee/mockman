@@ -64,7 +64,7 @@ crashing the worker. See [09](09-data-model.md#versioning-and-migration).
 
 ## Tab targeting has no UI
 
-Opening the Network Mock panel on a tab *is* how you choose it. The panel holds a
+Opening the Mockman panel on a tab *is* how you choose it. The panel holds a
 long-lived `chrome.runtime` port open to the worker for as long as it is on screen;
 the worker targets the tab on connect and untargets it on `onDisconnect`.
 

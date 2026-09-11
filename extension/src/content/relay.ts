@@ -11,7 +11,7 @@
  * from `sender.tab.id`, so a hostile page cannot claim to be a different tab.
  */
 
-import { PAGE_EVENT } from '@network-mock/shared';
+import { PAGE_EVENT } from '@mockman/shared';
 import type {
   BodyEventDetail,
   ConfigEventDetail,
@@ -20,7 +20,7 @@ import type {
   TabConfig,
   ToWorker,
   WorkerBroadcast,
-} from '@network-mock/shared';
+} from '@mockman/shared';
 
 /** Inert until told otherwise, so an unreachable worker means "do not mock". */
 let lastConfig: TabConfig = { active: false, observed: false, mocks: [] };

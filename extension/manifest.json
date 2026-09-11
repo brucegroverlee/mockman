@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Network Mock",
+  "name": "Mockman",
   "version": "0.1.0",
   "description": "Mock network responses with groups, tags, per-tab targeting and MCP access, from a DevTools panel.",
 

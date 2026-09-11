@@ -23,7 +23,7 @@ importers:
 
   extension:
     dependencies:
-      '@network-mock/shared':
+      '@mockman/shared':
         specifier: workspace:*
         version: link:../shared
       react:
@@ -60,7 +60,7 @@ importers:
       '@modelcontextprotocol/server':
         specifier: ^2.0.0
         version: 2.0.0
-      '@network-mock/shared':
+      '@mockman/shared':
         specifier: workspace:*
         version: link:../shared
       ws:
