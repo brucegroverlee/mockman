@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { PANEL_PORT } from '@network-mock/shared';
 import type {
+  CapturedResponse,
   FromWorker,
   HitRecord,
   PanelHello,
@@ -38,6 +39,18 @@ export async function getWorkspace(): Promise<Workspace | null> {
 
 export async function putWorkspace(workspace: Workspace): Promise<void> {
   await send({ type: 'set-workspace', workspace });
+}
+
+/**
+ * The response body the interceptor captured for a hit, or null.
+ *
+ * Fetched only when "mock it" is clicked. Bodies are held in the worker under a
+ * hard cap and are not part of a `HitRecord`, precisely so that the log can hold
+ * hundreds of rows without hauling their payloads around — see `bodyKey`.
+ */
+export async function getCapturedBody(key: string): Promise<CapturedResponse | null> {
+  const reply = await send({ type: 'get-hit-body', key });
+  return reply.type === 'hit-body' ? reply.captured : null;
 }
 
 /**

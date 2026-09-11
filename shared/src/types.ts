@@ -173,6 +173,18 @@ export interface CompiledMock {
 export interface TabConfig {
   /** False when this tab is not targeted, or the master switch is off. */
   active: boolean;
+  /**
+   * Whether a panel is watching this tab — regardless of the master switch.
+   *
+   * Separate from `active` because the content scripts run on `<all_urls>`, so
+   * "should I mock this request" and "is anyone looking at this tab" are
+   * genuinely different questions. Capturing response bodies keys off *this*
+   * one: doing it on every tab in the browser would buffer and ship page content
+   * nobody asked us to look at, and gating it on `active` instead would break
+   * the ordinary workflow of turning mocking off, browsing, and capturing the
+   * payloads you want to mock.
+   */
+  observed: boolean;
   mocks: CompiledMock[];
 }
 
@@ -191,4 +203,23 @@ export interface HitRecord {
   /** The mock's own label, if it set one. */
   label?: string;
   status?: number;
+  /**
+   * Handle for the real response body the interceptor captured, when it did.
+   *
+   * Present only for `outcome === 'passed'`, and only when the response looked
+   * like a text payload small enough to keep — see `shouldCaptureResponse`. The
+   * body itself is deliberately *not* on this record: hits are kept by the
+   * hundred and are shipped whole over MCP, so bodies are held separately,
+   * capped, and fetched on demand with `get-hit-body`.
+   *
+   * This is what lets "mock it" pre-fill from a request that
+   * `chrome.devtools.network` never reported, or reported without its body.
+   */
+  bodyKey?: string;
+}
+
+/** A captured response body together with the headers it arrived with. */
+export interface CapturedResponse {
+  body: string;
+  headers: Record<string, string>;
 }

@@ -21,10 +21,15 @@ import { readStored, writeStored } from './storage.ts';
  * has scrolled up.
  *
  * Rows that reached the real network carry a "mock it" button, which captures
- * the response as it actually was and drops a ready-made mock into the tree.
- * That is the fastest path from "I can see the request" to "I control the
- * request", and it is why the log lives next to the tree rather than in a
- * separate view.
+ * the response as it actually was — status, headers and body — and drops a
+ * ready-made mock into the tree, selected and ready to edit. That is the fastest
+ * path from "I can see the request" to "I control the request", and it is why
+ * the log lives next to the tree rather than in a separate view.
+ *
+ * Pre-filling the *body* is the part that earns the button: a mock whose payload
+ * you still have to write from scratch has saved you a url and nothing else. See
+ * `PassedEntry.getResponse` for where that body comes from, and why there are
+ * two sources for it.
  */
 
 /** Where captured mocks go when no folder is selected. */
@@ -94,6 +99,20 @@ function useLogFilter(): {
     toggleCategory,
     showAll: useCallback(() => commit(new Set()), [commit]),
   };
+}
+
+/**
+ * The response's content type, lowercased, or `''`.
+ *
+ * Looked up case-insensitively because the two capture sources disagree: a HAR
+ * entry carries whatever casing the server sent, and `fetch` normalises to
+ * lowercase.
+ */
+function contentTypeOf(headers: Record<string, string>): string {
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() === 'content-type') return value.toLowerCase();
+  }
+  return '';
 }
 
 function patternFor(url: string): string {
@@ -191,8 +210,11 @@ export function HitLog({
   const capture = async (entry: PassedEntry): Promise<void> => {
     setCapturing(entry.key);
     try {
-      const body = await entry.getBody();
-      const contentType = entry.responseHeaders['content-type'] ?? entry.responseHeaders['Content-Type'] ?? '';
+      // Headers come back alongside the body rather than off the row: an
+      // interceptor-only row learns both at the same moment, and the two must
+      // describe the same response for the json/text guess below to be right.
+      const { body, headers } = await entry.getResponse();
+      const contentType = contentTypeOf(headers);
       const trimmed = body.trimStart();
       const looksJson =
         contentType.includes('json') || trimmed.startsWith('{') || trimmed.startsWith('[');
@@ -226,7 +248,9 @@ export function HitLog({
           },
           response: {
             status: entry.status || 200,
-            headers: entry.responseHeaders,
+            // Copied: the row's own `getResponse` may hand the same object out
+            // again, and this one is about to become part of the workspace.
+            headers: { ...headers },
             body,
             bodyKind: looksJson ? 'json' : 'text',
             delayMs: 0,
@@ -463,7 +487,7 @@ function Row({
           title={
             entry.bodyAvailable
               ? 'Create a mock from this request, pre-filled with the response it actually returned'
-              : 'Create a mock from this request. DevTools did not record the response, so the body starts empty'
+              : 'Create a mock from this request. This response was not recorded — it is not a text payload, or it was too large — so the body starts empty'
           }
           disabled={busy}
           onClick={() => void onCapture(entry)}

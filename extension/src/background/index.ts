@@ -15,6 +15,7 @@
 
 import { PANEL_PORT, compileActiveMocks, migrateWorkspace } from '@network-mock/shared';
 import type {
+  CapturedResponse,
   FromWorker,
   HitRecord,
   PanelHello,
@@ -32,6 +33,66 @@ const SESSION_KEY = 'targetTabIds';
 const HIT_LIMIT = 500;
 let hits: HitRecord[] = [];
 let hitSeq = 0;
+
+/**
+ * Captured response bodies, for the panel's "mock it".
+ *
+ * Kept apart from `hits` and capped far harder, because they are a different
+ * kind of thing: a hit is a line of telemetry that every consumer wants, a body
+ * is a payload that exactly one of them wants and only when someone clicks. Put
+ * on the record itself, they would ride along in every `get-hits` reply and every
+ * MCP query, and 500 of them would sit in a service worker that is supposed to
+ * be cheap to keep alive.
+ *
+ * Both caps matter: the count keeps a burst of small responses from unbounded
+ * growth, and the byte budget keeps a handful of large ones from doing the same.
+ * Eviction is oldest-first, which is also newest-wins — and the newest rows are
+ * the ones anyone is about to click "mock it" on.
+ */
+const BODY_LIMIT = 50;
+const BODY_BUDGET_BYTES = 8 * 1024 * 1024;
+
+interface CachedBody extends CapturedResponse {
+  /** So a closed tab's bodies go with it, the way its hits do. */
+  tabId: number;
+}
+
+/** Insertion-ordered, which is what makes iteration order the eviction order. */
+const bodies = new Map<string, CachedBody>();
+let bodyBytes = 0;
+
+function rememberBody(tabId: number, key: string, captured: CapturedResponse): void {
+  forgetBody(key); // a re-reported key replaces its predecessor rather than double-counting
+  bodies.set(key, { ...captured, tabId });
+  bodyBytes += captured.body.length;
+
+  for (const oldest of bodies.keys()) {
+    if (bodies.size <= BODY_LIMIT && bodyBytes <= BODY_BUDGET_BYTES) break;
+    // Never evict the entry just stored: a single body over the whole budget
+    // would otherwise be dropped instantly, which is worse than briefly
+    // exceeding it.
+    if (oldest === key) break;
+    forgetBody(oldest);
+  }
+}
+
+function forgetBody(key: string): void {
+  const existing = bodies.get(key);
+  if (!existing) return;
+  bodyBytes -= existing.body.length;
+  bodies.delete(key);
+}
+
+function forgetBodiesFor(tabId: number): void {
+  for (const [key, cached] of [...bodies]) {
+    if (cached.tabId === tabId) forgetBody(key);
+  }
+}
+
+function forgetAllBodies(): void {
+  bodies.clear();
+  bodyBytes = 0;
+}
 
 /**
  * Loads and normalises the stored workspace.
@@ -188,14 +249,25 @@ chrome.runtime.onMessage.addListener(
           case 'get-config': {
             const tabId = sender.tab?.id;
             if (tabId === undefined) {
-              sendResponse({ type: 'config', config: { active: false, mocks: [] } });
+              sendResponse({
+                type: 'config',
+                config: { active: false, observed: false, mocks: [] },
+              });
               return;
             }
             const workspace = await loadWorkspace();
-            const active = workspace.enabled && workspace.targetTabIds.includes(tabId);
+            // A panel holds its tab in `targetTabIds` for as long as it is open,
+            // so that set is exactly "the tabs someone is watching". The master
+            // switch gates mocking on top of it, and nothing else.
+            const observed = workspace.targetTabIds.includes(tabId);
+            const active = workspace.enabled && observed;
             sendResponse({
               type: 'config',
-              config: { active, mocks: active ? compileActiveMocks(workspace, tabId) : [] },
+              config: {
+                active,
+                observed,
+                mocks: active ? compileActiveMocks(workspace, tabId) : [],
+              },
             });
             return;
           }
@@ -204,6 +276,20 @@ chrome.runtime.onMessage.addListener(
             const tabId = sender.tab?.id;
             if (tabId !== undefined) recordHit(tabId, message.hit);
             sendResponse({ type: 'ok' });
+            return;
+          }
+
+          case 'report-hit-body': {
+            const tabId = sender.tab?.id;
+            if (tabId !== undefined) rememberBody(tabId, message.key, message.captured);
+            sendResponse({ type: 'ok' });
+            return;
+          }
+
+          case 'get-hit-body': {
+            // A miss is normal, not an error: the body may have been evicted, or
+            // the read may have failed in the page after the hit was reported.
+            sendResponse({ type: 'hit-body', captured: bodies.get(message.key) ?? null });
             return;
           }
 
@@ -238,7 +324,13 @@ chrome.runtime.onMessage.addListener(
           case 'clear-hits': {
             // A panel only ever shows its own tab, so it clears only its own
             // rows; the MCP tool omits tabId and clears everything.
-            hits = message.tabId === undefined ? [] : hits.filter((h) => h.tabId !== message.tabId);
+            if (message.tabId === undefined) {
+              hits = [];
+              forgetAllBodies();
+            } else {
+              hits = hits.filter((h) => h.tabId !== message.tabId);
+              forgetBodiesFor(message.tabId);
+            }
             sendResponse({ type: 'ok' });
             return;
           }
@@ -274,6 +366,7 @@ startBridge({
   },
   clearHits: () => {
     hits = [];
+    forgetAllBodies();
   },
   onStatusChange: (connected) => emit({ type: 'bridge-status', connected }),
 });
@@ -283,6 +376,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   void (async () => {
     panelsByTab.delete(tabId);
     hits = hits.filter((hit) => hit.tabId !== tabId);
+    forgetBodiesFor(tabId);
     await targetTab(tabId, false);
   })();
 });

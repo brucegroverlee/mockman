@@ -13,6 +13,7 @@
 
 import { PAGE_EVENT } from '@network-mock/shared';
 import type {
+  BodyEventDetail,
   ConfigEventDetail,
   FromWorker,
   HitEventDetail,
@@ -22,7 +23,7 @@ import type {
 } from '@network-mock/shared';
 
 /** Inert until told otherwise, so an unreachable worker means "do not mock". */
-let lastConfig: TabConfig = { active: false, mocks: [] };
+let lastConfig: TabConfig = { active: false, observed: false, mocks: [] };
 
 function pushConfigToPage(config: TabConfig): void {
   lastConfig = config;
@@ -46,7 +47,7 @@ async function ask(message: ToWorker): Promise<FromWorker | null> {
 async function fetchAndPushConfig(): Promise<void> {
   const reply = await ask({ type: 'get-config' });
   if (reply?.type === 'config') pushConfigToPage(reply.config);
-  else pushConfigToPage({ active: false, mocks: [] });
+  else pushConfigToPage({ active: false, observed: false, mocks: [] });
 }
 
 // The interceptor may load before or after us — there is no ordering guarantee
@@ -60,6 +61,16 @@ document.addEventListener(PAGE_EVENT.ready, () => {
 document.addEventListener(PAGE_EVENT.hit, (event) => {
   const detail = (event as CustomEvent<HitEventDetail>).detail;
   if (detail?.hit) void ask({ type: 'report-hit', hit: detail.hit });
+});
+
+// A captured response body, arriving after the hit that named it. It goes to the
+// worker rather than to the panel because the panel is usually closed when the
+// request happens, and is the whole point of keeping the body at all.
+document.addEventListener(PAGE_EVENT.body, (event) => {
+  const detail = (event as CustomEvent<BodyEventDetail>).detail;
+  if (detail?.key && detail.captured) {
+    void ask({ type: 'report-hit-body', key: detail.key, captured: detail.captured });
+  }
 });
 
 // Live updates: an edit in the panel (or over MCP) reaches the page without a

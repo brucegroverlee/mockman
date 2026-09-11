@@ -3,15 +3,21 @@
  * that see genuinely different things.
  *
  *  - **`chrome.devtools.network`** reports what the *network stack* did. It
- *    carries the response — which is what lets "mock it" pre-fill from reality —
- *    and it covers every resource type, not just API calls. But it describes the
- *    network's view: a CORS preflight is a first-class row here, and a request
- *    answered from the memory cache is not reported at all.
+ *    carries the response, and it covers every resource type, not just API
+ *    calls. But it describes the network's view: a CORS preflight is a
+ *    first-class row here, and a request answered from the memory cache is not
+ *    reported at all.
  *  - **The interceptor's hit stream** reports what the *page* asked for. It
  *    patched `fetch`, `XMLHttpRequest` and `EventSource` itself, so it cannot
  *    miss a call and always has the true method. It is also the only source that
- *    can see a mocked request, since those never reach the network. What it does
- *    not have is the response.
+ *    can see a mocked request, since those never reach the network.
+ *
+ * Both carry the response body, which is what lets "mock it" pre-fill from
+ * reality. Neither carries it reliably on its own — DevTools drops bodies it no
+ * longer has room for and never saw a request it did not report, and the
+ * interceptor only keeps text payloads under a size cap — so a row prefers
+ * whichever of the two actually has one. That fallback is the difference between
+ * "mock it" handing you the real payload to edit and handing you a blank editor.
  *
  * Taking only the first is what produced a log full of `OPTIONS` preflights with
  * none of the `GET`s that caused them. So both are used, and matching entries
@@ -21,9 +27,9 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { HitRecord } from '@network-mock/shared';
+import type { CapturedResponse, HitRecord } from '@network-mock/shared';
 
-import { usePageHits } from './messaging.ts';
+import { getCapturedBody, usePageHits } from './messaging.ts';
 import type { LogCategory } from './labels.ts';
 
 /** How many real requests to keep. Old ones fall off the top. */
@@ -45,23 +51,36 @@ export interface PassedEntry {
    * hovering it, rather than by rebuilding the extension with a console.log.
    */
   resourceType: string | undefined;
-  responseHeaders: Record<string, string>;
   /**
    * Which of the two sources produced this row.
    *
    * Surfaced in the tooltips. The two carry different fields — DevTools has the
-   * response, the interceptor has the true method — so when a row looks wrong,
-   * knowing which one it came from is the first question worth answering, and
-   * it should not require a rebuild to find out.
+   * resource type and the full headers, the interceptor has the true method — so
+   * when a row looks wrong, knowing which one it came from is the first question
+   * worth answering, and it should not require a rebuild to find out.
    */
   source: 'devtools' | 'interceptor';
   /**
-   * False for a row the interceptor reported but DevTools did not, where only
-   * the request is known. "mock it" still works; the body just starts empty.
+   * Whether a body is expected to be there to pre-fill from.
+   *
+   * Only the tooltip depends on it, and it is a promise about the source rather
+   * than a guarantee about the bytes: DevTools reports having the response
+   * before it is asked for it, and can still come back empty. "mock it" works
+   * either way — the url, method and status are always known.
    */
   bodyAvailable: boolean;
-  /** Callback-only in the DevTools API, so it stays lazy until "mock it". */
-  getBody: () => Promise<string>;
+  /**
+   * The response as it actually was, for "mock it" to pre-fill from.
+   *
+   * Lazy because both sources are: DevTools exposes bodies through a callback,
+   * and the interceptor's captures live in the service worker behind a message.
+   * Neither is worth paying for on a row nobody clicks.
+   *
+   * The headers come back with the body rather than being read off the row,
+   * because for an interceptor-only row they arrive together and there is
+   * nothing on the row to read.
+   */
+  getResponse: () => Promise<CapturedResponse>;
 }
 
 export interface MockedEntry {
@@ -222,6 +241,7 @@ function useRealTraffic(): { entries: PassedEntry[]; clear: () => void } {
       getBody: () => Promise<string>,
     ): PassedEntry | null => {
       try {
+        const headers = headerMap(entry.response?.headers);
         const method = entry.request?.method;
         const url = entry.request?.url;
         if (typeof method !== 'string' || typeof url !== 'string') return null;
@@ -244,10 +264,9 @@ function useRealTraffic(): { entries: PassedEntry[]; clear: () => void } {
           // Coerced rather than passed through: `Omit` widens the literal union
           // this field carries on `Request`, and it is only ever displayed.
           resourceType: entry._resourceType ? String(entry._resourceType) : undefined,
-          responseHeaders: headerMap(entry.response?.headers),
           source: 'devtools',
           bodyAvailable: true,
-          getBody,
+          getResponse: async () => ({ body: await getBody(), headers }),
         };
       } catch {
         return null;
@@ -345,13 +364,38 @@ function toMockedEntry(hit: HitRecord): MockedEntry {
 }
 
 /**
+ * An empty response, for a row where neither source kept the body.
+ *
+ * A fresh object each time: callers fold these headers straight into a new mock,
+ * and a shared constant would be one edit away from leaking between rows.
+ */
+function noResponse(): CapturedResponse {
+  return { body: '', headers: {} };
+}
+
+/**
+ * The interceptor's captured response for a hit, or an empty one.
+ *
+ * A miss is ordinary rather than exceptional: the capture is skipped for
+ * anything that is not a text payload under the size cap, the read can fail
+ * after the hit was already reported, and old bodies are evicted. "mock it" then
+ * behaves as it did before there was any capture at all.
+ */
+async function capturedResponseFor(key: string): Promise<CapturedResponse> {
+  return (await getCapturedBody(key)) ?? noResponse();
+}
+
+/**
  * An interceptor hit that DevTools never reported, rendered as its own row.
  *
- * It has everything except the response: the interceptor sees the request go
- * out, not what came back. "mock it" still works and still pre-fills the url and
- * method — only the body starts empty.
+ * DevTools is the richer source in every other respect — resource type, CORS
+ * preflights, non-API traffic — but it is not the *complete* one, and a request
+ * only the page saw still needs to be mockable. Since the interceptor captures
+ * response bodies of its own, such a row is now a first-class starting point for
+ * "mock it" rather than a url with an empty editor attached.
  */
 function toInterceptedEntry(hit: HitRecord): PassedEntry {
+  const { bodyKey } = hit;
   return {
     kind: 'passed',
     key: `i${hit.id}`,
@@ -364,10 +408,37 @@ function toInterceptedEntry(hit: HitRecord): PassedEntry {
     status: hit.status,
     category: 'fetch-xhr',
     resourceType: undefined,
-    responseHeaders: {},
     source: 'interceptor',
-    bodyAvailable: false,
-    getBody: () => Promise.resolve(''),
+    bodyAvailable: bodyKey !== undefined,
+    getResponse:
+      bodyKey === undefined
+        ? () => Promise.resolve(noResponse())
+        : () => capturedResponseFor(bodyKey),
+  };
+}
+
+/**
+ * A DevTools row backed by the interceptor's capture of the same request.
+ *
+ * DevTools is asked first — it is the source that saw the whole exchange, and
+ * its headers are the complete set. But `getContent` legitimately comes back
+ * empty: DevTools evicts bodies under memory pressure, and a row seeded from
+ * `getHAR()` only ever had whatever the HAR itself carried. When that happens
+ * the interceptor's copy is the only one left, and using it is the difference
+ * between pre-filling the real payload and pre-filling nothing.
+ */
+function withCaptureFallback(entry: PassedEntry, bodyKey: string): PassedEntry {
+  return {
+    ...entry,
+    getResponse: async () => {
+      const devtools = await entry.getResponse();
+      if (devtools.body !== '') return devtools;
+
+      const captured = await capturedResponseFor(bodyKey);
+      // DevTools' headers win where they exist: they are the full set, whereas
+      // the interceptor only sees what the page was allowed to read.
+      return { body: captured.body, headers: { ...captured.headers, ...devtools.headers } };
+    },
   };
 }
 
@@ -447,15 +518,19 @@ export function useNetworkLog(): NetworkLog {
 
       const [hit] = list.splice(best, 1);
 
-      // Merge rather than discard. The DevTools row wins overall — it has the
-      // response body — but if it has no usable status and the interceptor's
-      // record does, take that: throwing away the only status we have because
-      // the richer source happened to lack one is how a row ends up showing a
-      // dash for a request that plainly succeeded.
-      if (entry.status === undefined && hit?.status !== undefined) {
-        return { ...entry, status: hit.status };
+      // Merge rather than discard. The DevTools row wins overall — it describes
+      // the whole exchange — but each source knows something the other may not,
+      // and throwing that away because the richer source happened to lack it is
+      // how a row ends up showing a dash for a request that plainly succeeded,
+      // or an empty editor for a response that plainly had a body.
+      let merged = entry;
+      if (merged.status === undefined && hit?.status !== undefined) {
+        merged = { ...merged, status: hit.status };
       }
-      return entry;
+      if (hit?.bodyKey !== undefined) {
+        merged = withCaptureFallback(merged, hit.bodyKey);
+      }
+      return merged;
     });
 
     const orphans = [...unpaired.values()].flat().map(toInterceptedEntry);

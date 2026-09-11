@@ -1,6 +1,7 @@
 export * from './types.ts';
 export * from './tree.ts';
 export * from './enablement.ts';
+export * from './capture.ts';
 export * from './matcher.ts';
 export * from './messages.ts';
 export * from './migrate.ts';

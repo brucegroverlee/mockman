@@ -11,7 +11,7 @@
  * error rather than a silent no-op.
  */
 
-import type { HitRecord, TabConfig, Workspace } from './types.ts';
+import type { CapturedResponse, HitRecord, TabConfig, Workspace } from './types.ts';
 
 /**
  * DOM event names for the MAIN <-> ISOLATED hop.
@@ -26,6 +26,16 @@ export const PAGE_EVENT = {
   config: 'network-mock:config',
   /** MAIN → ISOLATED: a request was mocked or passed through. */
   hit: 'network-mock:hit',
+  /**
+   * MAIN → ISOLATED: here is the response body for a hit reported earlier.
+   *
+   * Separate from {@link PAGE_EVENT.hit} because the two are ready at different
+   * times: `fetch` resolves once the *headers* arrive, and the body can still be
+   * streaming long after. Reporting the hit and the body together would hold
+   * every row out of the log until its body finished — so the row goes out
+   * immediately and the body follows, matched up by `bodyKey`.
+   */
+  body: 'network-mock:body',
 } as const;
 
 /**
@@ -55,10 +65,19 @@ export interface HitEventDetail {
   hit: Omit<HitRecord, 'id' | 'tabId'>;
 }
 
+/** Sent as the `detail` of a {@link PAGE_EVENT.body} event. */
+export interface BodyEventDetail {
+  /** The `bodyKey` of the hit this body belongs to. */
+  key: string;
+  captured: CapturedResponse;
+}
+
 /** relay/panel → service worker. */
 export type ToWorker =
   | { type: 'get-config' }
   | { type: 'report-hit'; hit: Omit<HitRecord, 'id' | 'tabId'> }
+  | { type: 'report-hit-body'; key: string; captured: CapturedResponse }
+  | { type: 'get-hit-body'; key: string }
   | { type: 'get-workspace' }
   | { type: 'set-workspace'; workspace: Workspace }
   | { type: 'set-target-tabs'; tabIds: number[] }
@@ -70,6 +89,8 @@ export type FromWorker =
   | { type: 'config'; config: TabConfig }
   | { type: 'workspace'; workspace: Workspace }
   | { type: 'hits'; hits: HitRecord[] }
+  /** `captured` is null when the body was never delivered, or has been evicted. */
+  | { type: 'hit-body'; captured: CapturedResponse | null }
   | { type: 'ok' }
   | { type: 'error'; message: string };
 

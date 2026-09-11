@@ -141,8 +141,8 @@ sources, because neither is enough alone:
 - `MOCKED` rows come from the interceptor's own hit stream, carrying the breadcrumb
   path of the mock that answered. Nothing else can see these.
 - `passed` rows come from `chrome.devtools.network`, which sees every real request the
-  tab made *and* its full response — which is what lets the **mock it** button
-  pre-fill a new mock from what actually came back.
+  tab made *and* its full response — one of the two sources that let the **mock it**
+  button pre-fill a new mock from what actually came back.
 
 The interceptor's `passed` records are used too, and this matters more than it sounds.
 The two sources see genuinely different things:
@@ -159,9 +159,47 @@ The two sources see genuinely different things:
 Relying on DevTools alone produced a log full of `OPTIONS` preflights with none of the
 `GET`s that caused them. So entries from the two are **paired** — matched on method and
 url within a few seconds, since neither carries a request id — and each request is
-listed once. A DevTools entry always wins the pairing, because it is the one carrying
-the response *body* — a request only the interceptor saw still shows its status, but
-**mock it** on that row starts with an empty body.
+listed once. A DevTools entry wins the pairing, because it describes the whole
+exchange, but the interceptor's record is merged into it rather than discarded: it
+supplies the status where DevTools has none, and the response body where DevTools
+has none.
+
+### Where **mock it** gets its body
+
+Pre-filling the body is the part that earns the button — a mock whose payload you
+still have to type from scratch has saved you a url and nothing else. So *both*
+sources capture it, and a row uses whichever actually has one:
+
+- **DevTools** exposes bodies through `getContent`, but only for requests it
+  reported, and only while it still holds them. A row seeded from `getHAR()` has
+  whatever the HAR itself carried, which is often nothing.
+- **The interceptor** reads the real response as it passes through — a clone for
+  `fetch`, `responseText` for XHR — so it has a body for every call the page made,
+  including the ones DevTools never reported.
+
+The interceptor's capture is deliberately conservative, because it is buffering bytes
+inside the page. It only happens on a tab a panel is open on — `TabConfig.observed`,
+since the content scripts run on `<all_urls>` and reading response bodies out of every
+tab in the browser is not something to do on the off-chance someone clicks **mock it**.
+That is deliberately *not* the same gate as mocking: turning the master switch off
+stops mocks firing but keeps capture running, because browsing with mocking off to
+collect the payloads you then want to mock is the normal way to start.
+
+Beyond that gate, only text-shaped payloads (JSON, `text/*`, XML, JavaScript, form
+encodings) under **512 KB**, and never a stream — `text/event-stream` has no end to
+wait for. The 512 KB is enforced as the body arrives, chunk by chunk, rather than after
+buffering it, because `content-length` is absent for anything chunked or compressed and
+a limit checked afterwards is not a limit. Anything skipped is skipped whole rather than
+truncated, since half a JSON document is not a starting point for a mock. The button's
+tooltip says which case a row is in before you click it.
+
+Captured bodies are held in the service worker under a hard cap (50 bodies, 8 MB,
+oldest evicted first) and fetched only when **mock it** is clicked. They are
+deliberately *not* part of a `HitRecord`: hits are kept by the hundred and are
+shipped whole over MCP, and a payload nobody asked for has no business riding along.
+A hit names its body with an opaque `bodyKey`; the body follows on its own message,
+because `fetch` resolves on *headers* and the body can still be streaming long
+after — holding the row back until then would make the log lag.
 
 A `–` in the status column means there is genuinely no status: the request failed at
 the network level, or it is an `EventSource` stream rather than a request that

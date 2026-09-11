@@ -20,8 +20,9 @@ pnpm install; pnpm build
 2. Open a page, press **F12**, choose the **Network Mock** tab.
 3. That tab is now mocked, for as long as the panel stays open.
 4. Add a folder and a mock with the toolbar buttons, and set a pattern like `*/api/*`.
-   Or hit **mock it** on any row in the log at the bottom to capture a real request,
-   response and all.
+   Or hit **mock it** on any row in the log at the bottom to capture a real request —
+   url, status, headers and the response body it actually returned — so you start by
+   editing reality instead of retyping it.
 
 No Node installed? You only need pnpm — see
 [docs/01-windows-setup.md](docs/01-windows-setup.md). The repo pins its own Node

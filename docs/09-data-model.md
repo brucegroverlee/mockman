@@ -186,8 +186,14 @@ interface HitRecord {
   path?: string;
   label?: string;
   status?: number;
+  bodyKey?: string;               // handle for a captured response body (passed only)
 }
 ```
+
+`bodyKey` is what **mock it** pre-fills from. The body itself is *not* on the record
+— hits are kept by the hundred and shipped whole over MCP — so it is held separately
+in the service worker under a hard cap and fetched on demand. See
+[05](05-interception.md#where-mock-it-gets-its-body).
 
 ## Versioning and migration
 

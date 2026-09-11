@@ -20,8 +20,15 @@
  *    read from a clone — see the comment there.
  */
 
-import { PAGE_EVENT, resolveCompiled } from '@network-mock/shared';
+import {
+  CAPTURE_BODY_LIMIT,
+  PAGE_EVENT,
+  resolveCompiled,
+  shouldCaptureResponse,
+} from '@network-mock/shared';
 import type {
+  BodyEventDetail,
+  CapturedResponse,
   CompiledMock,
   ConfigEventDetail,
   HitRecord,
@@ -32,7 +39,7 @@ import type {
 /** How long to wait for the relay before giving up and passing everything through. */
 const CONFIG_TIMEOUT_MS = 2000;
 
-let config: TabConfig = { active: false, mocks: [] };
+let config: TabConfig = { active: false, observed: false, mocks: [] };
 let settled = false;
 
 let releaseReady!: () => void;
@@ -62,6 +69,211 @@ document.dispatchEvent(new CustomEvent(PAGE_EVENT.ready));
 
 function report(hit: Omit<HitRecord, 'id' | 'tabId'>): void {
   document.dispatchEvent(new CustomEvent(PAGE_EVENT.hit, { detail: { hit } }));
+}
+
+/**
+ * Response-body capture, so the panel's "mock it" can pre-fill a mock with what
+ * the endpoint actually returned.
+ *
+ * The panel's other source, `chrome.devtools.network`, carries response bodies
+ * too — but only for requests it reported, and only while it still holds them.
+ * Neither is guaranteed, and a "mock it" that opens an empty editor is the most
+ * annoying way for this feature to fail: the whole point is to start from
+ * reality and edit it, not to retype a payload by hand.
+ *
+ * So the interceptor captures too. It sees every call the page makes, by
+ * construction, which makes it the reliable source — and the one that has to be
+ * careful, since it is buffering bytes inside the page.
+ *
+ * Two gates keep that carefulness honest. `config.observed` restricts capture to
+ * tabs a panel is actually open on: this file runs on `<all_urls>`, and reading
+ * response bodies out of every tab in the browser is not something to do on the
+ * off-chance someone clicks "mock it". `shouldCaptureResponse` then decides
+ * whether a given response is worth keeping at all.
+ */
+
+/**
+ * Per-frame prefix, because the relay runs in every frame and each frame has its
+ * own copy of this file. A bare counter would collide across iframes, and one
+ * frame's body would be served for another frame's row.
+ */
+const CAPTURE_PREFIX = Math.random().toString(36).slice(2, 8);
+let captureSeq = 0;
+
+function nextBodyKey(): string {
+  return `${CAPTURE_PREFIX}-${++captureSeq}`;
+}
+
+function reportBody(key: string, captured: CapturedResponse): void {
+  const detail: BodyEventDetail = { key, captured };
+  document.dispatchEvent(new CustomEvent(PAGE_EVENT.body, { detail }));
+}
+
+function headerObject(headers: Headers): Record<string, string> {
+  const out: Record<string, string> = {};
+  try {
+    headers.forEach((value, name) => {
+      out[name] = value;
+    });
+  } catch {
+    /* an opaque response exposes no headers; an empty map is the honest answer */
+  }
+  return out;
+}
+
+/** `getAllResponseHeaders()` returns one `name: value` pair per CRLF-delimited line. */
+function parseRawHeaders(raw: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const line of String(raw ?? '').split(/\r?\n/)) {
+    const colon = line.indexOf(':');
+    if (colon <= 0) continue;
+    out[line.slice(0, colon).trim()] = line.slice(colon + 1).trim();
+  }
+  return out;
+}
+
+/**
+ * The text of a finished XHR's response, or `undefined` when there is no text to
+ * be had.
+ *
+ * `responseText` throws outright for a `blob`, `arraybuffer` or `document`
+ * `responseType`, so each is handled on its own terms: `json` is re-serialised
+ * (the parsed value is all XHR kept), `arraybuffer` is decoded, and `blob` and
+ * `document` are skipped — a Blob needs an await there is nowhere to put, and a
+ * re-serialised DOM is not what came over the wire.
+ */
+function readXhrText(xhr: XMLHttpRequest): string | undefined {
+  try {
+    switch (xhr.responseType) {
+      case '':
+      case 'text':
+        return xhr.responseText;
+      case 'json':
+        return xhr.response === null || xhr.response === undefined
+          ? undefined
+          : JSON.stringify(xhr.response, null, 2);
+      case 'arraybuffer':
+        return xhr.response ? new TextDecoder().decode(xhr.response as ArrayBuffer) : undefined;
+      default:
+        return undefined;
+    }
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Captures a finished XHR, and returns the key to put on its hit.
+ *
+ * Everything is already in hand here, so the key is only minted when there
+ * genuinely is a body behind it — unlike the fetch path, which has to commit
+ * before the body has finished arriving.
+ */
+function captureXhr(xhr: XMLHttpRequest): string | undefined {
+  if (!config.observed) return undefined;
+
+  let headers: Record<string, string>;
+  try {
+    headers = parseRawHeaders(xhr.getAllResponseHeaders());
+  } catch {
+    return undefined;
+  }
+  if (!shouldCaptureResponse(headers)) return undefined;
+
+  const body = readXhrText(xhr);
+  if (body === undefined || body.length > CAPTURE_BODY_LIMIT) return undefined;
+
+  const key = nextBodyKey();
+  reportBody(key, { body, headers });
+  return key;
+}
+
+/**
+ * Reads a response body, giving up rather than exceeding `CAPTURE_BODY_LIMIT`.
+ *
+ * `text()` cannot be used for this: it buffers the whole body and only then
+ * hands it over, so the limit would be checked after the memory had already been
+ * spent. Since `content-length` is absent for anything chunked or compressed —
+ * which is most JSON APIs — that would leave the cap as a hope rather than a
+ * bound. Reading chunk by chunk makes it a real one, and cancels the moment the
+ * budget is gone.
+ *
+ * Cancelling is safe: `clone()` tees the stream, and the branches are
+ * independent, so abandoning ours does nothing to the one the page is reading.
+ */
+async function readCapped(response: Response): Promise<string | undefined> {
+  const stream = response.body;
+  if (!stream) return undefined;
+
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      size += value.byteLength;
+      if (size > CAPTURE_BODY_LIMIT) {
+        // Abandoned rather than truncated: half a JSON document is not a
+        // starting point for a mock, it is a syntax error found later.
+        void reader.cancel().catch(() => {});
+        return undefined;
+      }
+      chunks.push(value);
+    }
+  } catch {
+    // The page aborted, or the body failed mid-stream. Either way there is no
+    // response to offer.
+    return undefined;
+  }
+
+  const merged = new Uint8Array(size);
+  let at = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, at);
+    at += chunk.byteLength;
+  }
+
+  try {
+    return new TextDecoder().decode(merged);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Starts capturing a real `fetch` response, and returns the key to put on its
+ * hit.
+ *
+ * The clone is taken synchronously, before the response is handed back, which is
+ * the only moment it is guaranteed to be unread — and it is the clone that gets
+ * drained, so the page's own copy is untouched.
+ *
+ * The read is deliberately **not** awaited. `fetch` resolves on headers, so
+ * awaiting the body here would delay the caller by however long the body takes
+ * to arrive, which this file promises never to do. That is also why the key is
+ * minted before the body exists: the hit goes out now, and the body catches up.
+ */
+function captureFetch(response: Response): string | undefined {
+  if (!config.observed) return undefined;
+
+  const headers = headerObject(response.headers);
+  if (!shouldCaptureResponse(headers)) return undefined;
+
+  let clone: Response;
+  try {
+    clone = response.clone();
+  } catch {
+    return undefined;
+  }
+
+  const key = nextBodyKey();
+  void readCapped(clone).then((body) => {
+    if (body !== undefined) reportBody(key, { body, headers });
+  });
+  return key;
 }
 
 function absolutise(url: string): string {
@@ -156,12 +368,16 @@ async function applyDelay(mock: CompiledMock): Promise<void> {
  *
  * A status of 0 means the request failed outright (network error, abort), which
  * is not a status anyone can act on, so it is left off.
+ *
+ * `bodyKey` names the captured response body, when one is being captured; the
+ * body itself follows on its own event. See the capture block above.
  */
 function reportPassed(
   method: string,
   url: string,
   startedAt: number,
   status?: number,
+  bodyKey?: string,
 ): void {
   const hit: Omit<HitRecord, 'id' | 'tabId'> = {
     timestamp: startedAt,
@@ -170,6 +386,7 @@ function reportPassed(
     outcome: 'passed',
   };
   if (status !== undefined && status > 0) hit.status = status;
+  if (bodyKey !== undefined) hit.bodyKey = bodyKey;
   report(hit);
 }
 
@@ -315,7 +532,9 @@ window.fetch = async function patchedFetch(
     const startedAt = Date.now();
     try {
       const real = await originalFetch.call(window, input as RequestInfo, init);
-      reportPassed(method, url, startedAt, real.status);
+      // Capture first, so the hit can name the body that is on its way. Starting
+      // the capture does not block the caller — see `captureFetch`.
+      reportPassed(method, url, startedAt, real.status, captureFetch(real));
       return real;
     } catch (error) {
       // A network-level failure still belongs in the log — knowing the request
@@ -386,7 +605,9 @@ XhrProto.send = function patchedSend(this: XMLHttpRequest, body?: Document | XML
       try {
         originalSend.call(this, body ?? null);
       } finally {
-        reportPassed(state.method, state.url, startedAt, this.status);
+        // A synchronous XHR has its whole response in hand the moment send()
+        // returns, so capturing it is a plain read with nothing to await.
+        reportPassed(state.method, state.url, startedAt, this.status, captureXhr(this));
       }
       return;
     }
@@ -405,7 +626,7 @@ XhrProto.send = function patchedSend(this: XMLHttpRequest, body?: Document | XML
       const startedAt = Date.now();
       const onDone = (): void => {
         this.removeEventListener('loadend', onDone);
-        reportPassed(state.method, state.url, startedAt, this.status);
+        reportPassed(state.method, state.url, startedAt, this.status, captureXhr(this));
       };
       this.addEventListener('loadend', onDone);
       originalSend.call(this, body ?? null);
