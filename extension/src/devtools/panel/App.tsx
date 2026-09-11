@@ -5,7 +5,8 @@ import { Detail } from './Detail.tsx';
 import { ErrorBoundary } from './ErrorBoundary.tsx';
 import { HitLog } from './HitLog.tsx';
 import { Tree } from './Tree.tsx';
-import { useBridgeStatus, useTabTargeting, useWorkspace } from './messaging.ts';
+// MVP: `useBridgeStatus` is unused while the MCP chip is hidden — see below.
+import { /* useBridgeStatus, */ useTabTargeting, useWorkspace } from './messaging.ts';
 import { readStored, writeStored } from './storage.ts';
 
 /**
@@ -31,7 +32,7 @@ import { readStored, writeStored } from './storage.ts';
  */
 export function App(): React.JSX.Element {
   const { workspace, update } = useWorkspace();
-  const bridgeConnected = useBridgeStatus();
+  // const bridgeConnected = useBridgeStatus();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const shell = useRef<HTMLDivElement>(null);
 
@@ -86,6 +87,8 @@ export function App(): React.JSX.Element {
 
         <span className="spacer" />
 
+        {/* MVP: the MCP status chip is hidden while the bridge is not part of
+            the story we are sharing. Uncomment with `useBridgeStatus` above.
         <span
           className={`bridge ${bridgeConnected ? 'up' : 'down'}`}
           title={
@@ -96,6 +99,7 @@ export function App(): React.JSX.Element {
         >
           MCP
         </span>
+        */}
       </header>
 
       {/* Each pane is isolated: a mock with a shape this build does not expect

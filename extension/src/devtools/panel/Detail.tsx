@@ -31,7 +31,10 @@ import {
   statusClass,
 } from './labels.ts';
 
-type PayloadTab = 'response' | 'request' | 'headers';
+// MVP: the response payload is the only editable pane for now. The request-body
+// matcher and the response-header editor are hidden — restore the commented-out
+// members here and the blocks below to bring them back.
+type PayloadTab = 'response' /* | 'request' | 'headers' */;
 
 export function Detail({
   workspace,
@@ -264,7 +267,8 @@ function MockDetail({
   onSelect: (id: string | null) => void;
 }): React.JSX.Element {
   const [tab, setTab] = useState<PayloadTab>('response');
-  const [testUrl, setTestUrl] = useState('');
+  // MVP: the pattern tester is hidden, see the commented-out block below.
+  // const [testUrl, setTestUrl] = useState('');
 
   const tagsById = useMemo(() => indexTags(workspace.tags), [workspace.tags]);
   const activation = explainMock(workspace, ancestors, mock, inspectedTabId, tagsById);
@@ -284,7 +288,7 @@ function MockDetail({
     [mock.match.urlPattern, mock.match.patternKind],
   );
   const patternValid = compiled !== null;
-  const testMatches = patternValid && testUrl ? compiled.test(testUrl) : null;
+  // const testMatches = patternValid && testUrl ? compiled.test(testUrl) : null;
 
   return (
     <div className="detail">
@@ -382,6 +386,7 @@ function MockDetail({
           />
         </label>
 
+        {/* MVP: the optional label badge is hidden for now.
         <label className="field grow">
           <span>Label</span>
           <input
@@ -396,6 +401,7 @@ function MockDetail({
             onChange={(e) => patch({ label: e.target.value })}
           />
         </label>
+        */}
       </div>
 
       <div className="field-row">
@@ -414,6 +420,7 @@ function MockDetail({
         >
           Response payload
         </button>
+        {/* MVP: the request-payload and response-header tabs are hidden.
         <button
           role="tab"
           aria-selected={tab === 'request'}
@@ -434,10 +441,12 @@ function MockDetail({
             <span className="count">{Object.keys(mock.response.headers).length}</span>
           )}
         </button>
+        */}
       </div>
 
       <div className="tab-body">
         {tab === 'response' && <ResponsePayload mock={mock} patch={patch} />}
+        {/* MVP: hidden along with their tabs above.
         {tab === 'request' && <RequestPayload mock={mock} patch={patch} />}
         {tab === 'headers' && (
           <HeadersEditor
@@ -445,8 +454,10 @@ function MockDetail({
             onChange={(headers) => patch({ response: { ...mock.response, headers } })}
           />
         )}
+        */}
       </div>
 
+      {/* MVP: the pattern tester is hidden until it earns its keep.
       <div className="tester">
         <input
           className="grow"
@@ -461,6 +472,7 @@ function MockDetail({
           </span>
         )}
       </div>
+      */}
     </div>
   );
 }
