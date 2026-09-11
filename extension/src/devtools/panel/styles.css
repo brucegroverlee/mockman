@@ -513,10 +513,24 @@ button.icon {
    Detail
    -------------------------------------------------------------------------- */
 
+/*
+ * A column, so the payload editor can have the height the pane actually has.
+ *
+ * Everything here is intrinsically sized and pinned that way by the rule below;
+ * the only thing that stretches is `.tab-body`, and inside it only the code
+ * editor. When the fields above leave too little room the editor falls back to
+ * its minimum and `.detail` scrolls, which is why this still has `overflow`.
+ */
 .detail {
+  display: flex;
+  flex-direction: column;
   overflow: auto;
   padding: 8px 10px;
   min-width: 0;
+}
+
+.detail > * {
+  flex: none;
 }
 
 .empty-detail {
@@ -706,6 +720,19 @@ button.danger:hover:not(:disabled) {
 
 .tab-body {
   padding-top: 6px;
+  display: flex;
+  flex-direction: column;
+  /* Takes the rest of the detail pane and hands it to the code editor. */
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.tab-body > * {
+  flex: none;
+}
+
+.tab-body .code {
+  flex: 1 1 auto;
 }
 
 .tab-toolbar {
@@ -770,6 +797,8 @@ button.danger:hover:not(:disabled) {
   border-radius: 4px;
   overflow: hidden;
   background: var(--bg);
+  /* Eight lines plus the textarea's padding: the same floor `minRows` numbers. */
+  min-height: 140px;
 
   /* Both halves must agree exactly, or the gutter drifts from the text. */
   --code-font: 11px/16px ui-monospace, 'Cascadia Mono', 'Consolas', monospace;
@@ -787,15 +816,29 @@ button.danger:hover:not(:disabled) {
   flex: none;
 }
 
+/*
+ * The numbers themselves: one preformatted block holding only the lines that can
+ * be on screen, padded above and below to keep the gutter's full scroll height.
+ * See `CodeEditor` for why it is windowed and what the padding stands in for.
+ */
+.code-lines {
+  white-space: pre;
+}
+
+/*
+ * Fills `.code`, which is itself sized by the pane. It used to be the other way
+ * round — a `min-height` and a `max-height: 46vh` here sized the editor, and the
+ * cap meant a long payload stopped growing at half the viewport with the detail
+ * pane visibly empty below it. Height belongs to the layout, not to the field.
+ */
 .code-area {
   font: var(--code-font);
   flex: 1;
-  min-height: 140px;
-  max-height: 46vh;
+  min-height: 0;
   padding: 6px 8px;
   border: 0;
   border-radius: 0;
-  resize: vertical;
+  resize: none;
   overflow: auto;
   white-space: pre;
   tab-size: 2;

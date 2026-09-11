@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { createFolder, createMock, findFolder, findNode } from '@network-mock/shared';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createFolder, createMock, findFolder } from '@network-mock/shared';
 import type { HttpMethod, Workspace } from '@network-mock/shared';
 
 import { isPreflight, useNetworkLog } from './network.ts';
@@ -199,6 +199,27 @@ export function HitLog({
    * up to read something clears it, so the log never yanks the view out from
    * under the user.
    */
+  /*
+   * Every id in the tree, collected once per change to it.
+   *
+   * A row needs to know whether the mock it fired from is still there, and each
+   * row used to answer that by walking the tree itself. That is a walk per
+   * mocked row per render, and the whole log re-renders whenever the workspace
+   * does — so editing one field in the editor walked the tree a few hundred
+   * times before the next frame.
+   */
+  const liveIds = useMemo(() => {
+    const ids = new Set<string>();
+    const walk = (nodes: Workspace['tree']): void => {
+      for (const node of nodes) {
+        ids.add(node.id);
+        if (node.kind === 'folder') walk(node.children);
+      }
+    };
+    walk(workspace.tree);
+    return ids;
+  }, [workspace.tree]);
+
   const rowsRef = useRef<HTMLDivElement | null>(null);
   const stuckToBottom = useRef(true);
 
@@ -207,62 +228,67 @@ export function HitLog({
     if (el && stuckToBottom.current) el.scrollTop = el.scrollHeight;
   }, [visible]);
 
-  const capture = async (entry: PassedEntry): Promise<void> => {
-    setCapturing(entry.key);
-    try {
-      // Headers come back alongside the body rather than off the row: an
-      // interceptor-only row learns both at the same moment, and the two must
-      // describe the same response for the json/text guess below to be right.
-      const { body, headers } = await entry.getResponse();
-      const contentType = contentTypeOf(headers);
-      const trimmed = body.trimStart();
-      const looksJson =
-        contentType.includes('json') || trimmed.startsWith('{') || trimmed.startsWith('[');
+  // Stable, so `Row` can skip re-rendering when only the workspace moved.
+  const capture = useCallback(
+    async (entry: PassedEntry): Promise<void> => {
+      setCapturing(entry.key);
+      try {
+        // Headers come back alongside the body rather than off the row: an
+        // interceptor-only row learns both at the same moment, and the two must
+        // describe the same response for the json/text guess below to be right.
+        const { body, headers } = await entry.getResponse();
+        const contentType = contentTypeOf(headers);
+        const trimmed = body.trimStart();
+        const looksJson =
+          contentType.includes('json') || trimmed.startsWith('{') || trimmed.startsWith('[');
 
-      await update((current) => {
-        let next = current;
+        await update((current) => {
+          let next = current;
 
-        // Prefer the folder the user has selected; otherwise make (or reuse) a
-        // "Captured" folder, so capturing never fails for want of somewhere to
-        // put things.
-        let parentId = targetFolderId && findFolder(next.tree, targetFolderId) ? targetFolderId : null;
-        if (!parentId) {
-          const existing = next.tree.find(
-            (node) => node.kind === 'folder' && node.name === CAPTURE_FOLDER,
-          );
-          if (existing) {
-            parentId = existing.id;
-          } else {
-            const created = createFolder(next, null, { name: CAPTURE_FOLDER });
-            next = created.workspace;
-            parentId = created.folder.id;
+          // Prefer the folder the user has selected; otherwise make (or reuse) a
+          // "Captured" folder, so capturing never fails for want of somewhere to
+          // put things.
+          let parentId =
+            targetFolderId && findFolder(next.tree, targetFolderId) ? targetFolderId : null;
+          if (!parentId) {
+            const existing = next.tree.find(
+              (node) => node.kind === 'folder' && node.name === CAPTURE_FOLDER,
+            );
+            if (existing) {
+              parentId = existing.id;
+            } else {
+              const created = createFolder(next, null, { name: CAPTURE_FOLDER });
+              next = created.workspace;
+              parentId = created.folder.id;
+            }
           }
-        }
 
-        const result = createMock(next, parentId, {
-          name: nameFor(entry.url),
-          match: {
-            method: entry.method.toUpperCase() as HttpMethod,
-            urlPattern: patternFor(entry.url),
-            patternKind: 'glob',
-          },
-          response: {
-            status: entry.status || 200,
-            // Copied: the row's own `getResponse` may hand the same object out
-            // again, and this one is about to become part of the workspace.
-            headers: { ...headers },
-            body,
-            bodyKind: looksJson ? 'json' : 'text',
-            delayMs: 0,
-          },
+          const result = createMock(next, parentId, {
+            name: nameFor(entry.url),
+            match: {
+              method: entry.method.toUpperCase() as HttpMethod,
+              urlPattern: patternFor(entry.url),
+              patternKind: 'glob',
+            },
+            response: {
+              status: entry.status || 200,
+              // Copied: the row's own `getResponse` may hand the same object out
+              // again, and this one is about to become part of the workspace.
+              headers: { ...headers },
+              body,
+              bodyKind: looksJson ? 'json' : 'text',
+              delayMs: 0,
+            },
+          });
+          onCreated(result.mock.id);
+          return result.workspace;
         });
-        onCreated(result.mock.id);
-        return result.workspace;
-      });
-    } finally {
-      setCapturing(null);
-    }
-  };
+      } finally {
+        setCapturing(null);
+      }
+    },
+    [onCreated, targetFolderId, update],
+  );
 
   return (
     <section className="log">
@@ -387,7 +413,7 @@ export function HitLog({
             busy={capturing === entry.key}
             onCapture={capture}
             onSelectMock={onCreated}
-            workspace={workspace}
+            mockStillExists={entry.kind === 'mocked' && !!entry.mockId && liveIds.has(entry.mockId)}
           />
         ))}
       </div>
@@ -427,25 +453,31 @@ function describeMissingStatus(entry: LogEntry): string {
     : 'The interceptor saw this request but got no status back — it failed at the network level, or is a stream';
 }
 
-function Row({
+/**
+ * One line of the log.
+ *
+ * Memoised, and told whether its mock still exists rather than given the
+ * workspace to look it up in — both for the same reason: hundreds of these are
+ * mounted at once, and every workspace edit re-renders the log around them.
+ */
+const Row = memo(function Row({
   entry,
   busy,
   onCapture,
   onSelectMock,
-  workspace,
+  mockStillExists,
 }: {
   entry: LogEntry;
   busy: boolean;
   onCapture: (entry: PassedEntry) => Promise<void>;
   onSelectMock: (mockId: string) => void;
-  workspace: Workspace;
+  /**
+   * A mock deleted after it fired leaves its hit behind. The row stays — it is a
+   * true record of what happened — but there is nothing left to jump to.
+   */
+  mockStillExists: boolean;
 }): React.JSX.Element {
   const mocked = entry.kind === 'mocked';
-
-  // A mock deleted after it fired leaves its hit behind. The row stays — it is a
-  // true record of what happened — but there is nothing left to jump to.
-  const stillExists =
-    mocked && entry.mockId !== undefined && findNode(workspace.tree, entry.mockId) !== null;
 
   return (
     <div className={`log-row ${mocked ? 'mocked' : 'passed'}`}>
@@ -475,7 +507,7 @@ function Row({
           <button
             className="via"
             title={`Show ${entry.path ?? 'this mock'} in the tree`}
-            disabled={!entry.mockId || !stillExists}
+            disabled={!mockStillExists}
             onClick={() => entry.mockId && onSelectMock(entry.mockId)}
           >
             {entry.path ?? 'mock'}
@@ -497,4 +529,4 @@ function Row({
       )}
     </div>
   );
-}
+});

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
   compilePattern,
   deleteNode,
@@ -269,11 +269,20 @@ function MockDetail({
   const tagsById = useMemo(() => indexTags(workspace.tags), [workspace.tags]);
   const activation = explainMock(workspace, ancestors, mock, inspectedTabId, tagsById);
 
-  const patch = (changes: Partial<Mock>): void => {
-    void update((w) => updateMock(w, mock.id, changes));
-  };
+  // Stable across renders, so the payload editors below can be memoised on it.
+  const patch = useCallback(
+    (changes: Partial<Mock>): void => {
+      void update((w) => updateMock(w, mock.id, changes));
+    },
+    [update, mock.id],
+  );
 
-  const compiled = compilePattern(mock.match.urlPattern, mock.match.patternKind);
+  // Memoised on the pattern itself: this compiles a `RegExp`, and editing the
+  // payload or any other field is no reason to compile it again.
+  const compiled = useMemo(
+    () => compilePattern(mock.match.urlPattern, mock.match.patternKind),
+    [mock.match.urlPattern, mock.match.patternKind],
+  );
   const patternValid = compiled !== null;
   const testMatches = patternValid && testUrl ? compiled.test(testUrl) : null;
 
@@ -524,6 +533,23 @@ function StatusInput({
 // Tab bodies
 // ---------------------------------------------------------------------------
 
+/**
+ * The parse error in `text`, or null if it holds valid JSON.
+ *
+ * An empty or blank string is not an error: a payload you have not written yet
+ * is not a payload you got wrong. Pass `''` to skip the check entirely, which is
+ * how both callers express "this field is not JSON right now".
+ */
+function jsonErrorIn(text: string): string | null {
+  if (!text.trim()) return null;
+  try {
+    JSON.parse(text);
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : 'Invalid JSON';
+  }
+}
+
 function ResponsePayload({
   mock,
   patch,
@@ -531,23 +557,24 @@ function ResponsePayload({
   mock: Mock;
   patch: (changes: Partial<Mock>) => void;
 }): React.JSX.Element {
-  let bodyError: string | null = null;
-  if (mock.response.bodyKind === 'json' && mock.response.body.trim()) {
-    try {
-      JSON.parse(mock.response.body);
-    } catch (error) {
-      bodyError = error instanceof Error ? error.message : 'Invalid JSON';
-    }
-  }
+  // Memoised on the body, because parsing a large payload is the most expensive
+  // thing this pane does and nothing else that re-renders it changes the answer.
+  const bodyError = useMemo(
+    () => jsonErrorIn(mock.response.bodyKind === 'json' ? mock.response.body : ''),
+    [mock.response.bodyKind, mock.response.body],
+  );
+
+  // Stable while the response is, which is what lets `CodeEditor` skip a render
+  // when something else in the form moved. `mock.response` keeps its identity
+  // across a patch to any other field, so this only changes when it has to.
+  const setBody = useCallback(
+    (body: string) => patch({ response: { ...mock.response, body } }),
+    [patch, mock.response],
+  );
 
   const format = (): void => {
     try {
-      patch({
-        response: {
-          ...mock.response,
-          body: JSON.stringify(JSON.parse(mock.response.body), null, 2),
-        },
-      });
+      setBody(JSON.stringify(JSON.parse(mock.response.body), null, 2));
     } catch {
       /* the error is already on screen; nothing useful to do */
     }
@@ -577,7 +604,7 @@ function ResponsePayload({
         value={mock.response.body}
         invalid={bodyError !== null}
         placeholder="The body this mock responds with"
-        onChange={(body) => patch({ response: { ...mock.response, body } })}
+        onChange={setBody}
       />
     </>
   );
@@ -601,28 +628,33 @@ function RequestPayload({
   const body = mock.match.body;
   const enabled = body !== undefined;
 
-  const setBody = (next: { mode?: BodyMatchMode; value?: string } | null): void => {
-    if (next === null) {
-      const { body: _dropped, ...rest } = mock.match;
-      patch({ match: rest });
-      return;
-    }
-    patch({
-      match: {
-        ...mock.match,
-        body: { mode: next.mode ?? body?.mode ?? 'json-subset', value: next.value ?? body?.value ?? '' },
-      },
-    });
-  };
+  const setBody = useCallback(
+    (next: { mode?: BodyMatchMode; value?: string } | null): void => {
+      if (next === null) {
+        const { body: _dropped, ...rest } = mock.match;
+        patch({ match: rest });
+        return;
+      }
+      patch({
+        match: {
+          ...mock.match,
+          body: {
+            mode: next.mode ?? body?.mode ?? 'json-subset',
+            value: next.value ?? body?.value ?? '',
+          },
+        },
+      });
+    },
+    [patch, mock.match, body?.mode, body?.value],
+  );
 
-  let jsonError: string | null = null;
-  if (body?.mode === 'json-subset' && body.value.trim()) {
-    try {
-      JSON.parse(body.value);
-    } catch (error) {
-      jsonError = error instanceof Error ? error.message : 'Invalid JSON';
-    }
-  }
+  // Stable for as long as `setBody` is, so the editor can be memoised on it.
+  const setBodyValue = useCallback((value: string) => setBody({ value }), [setBody]);
+
+  const jsonError = useMemo(
+    () => jsonErrorIn(body?.mode === 'json-subset' ? body.value : ''),
+    [body?.mode, body?.value],
+  );
 
   return (
     <>
@@ -659,7 +691,7 @@ function RequestPayload({
             placeholder={
               body.mode === 'json-subset' ? '{\n  "action": "save"\n}' : 'Text to look for'
             }
-            onChange={(value) => setBody({ value })}
+            onChange={setBodyValue}
           />
           <p className="hint">{BODY_MODE_HINT[body.mode]}</p>
           {body.value === '' && (

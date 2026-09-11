@@ -2,9 +2,10 @@
  * Typed messaging between the panel and the service worker, plus the React hooks
  * that keep the UI in sync.
  *
- * The panel never holds authoritative state: it reads the workspace from the
- * worker and re-reads on every broadcast. That is what makes a mock created over
- * MCP show up here immediately, with no polling.
+ * The worker owns the workspace: the panel reads it from there and re-reads on
+ * every broadcast, which is what makes a mock created over MCP show up here
+ * immediately with no polling. The one exception is an edit the panel is in the
+ * middle of making — see `useWorkspace`.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -95,46 +96,131 @@ export function useTabTargeting(): void {
   }, []);
 }
 
+/** How long a burst of edits may accumulate before it is written through. */
+const FLUSH_DELAY_MS = 120;
+
 /**
  * The workspace plus a setter that writes through to the worker.
  *
  * `update` takes a function so callers compose the pure mutation helpers from
  * `@network-mock/shared` without worrying about staleness.
+ *
+ * The panel's copy is authoritative *while it is being edited*, and only then.
+ * It did not start out that way: every `update` used to await a fresh read from
+ * the worker before applying the mutation, so the new state reached React a
+ * round trip and a `chrome.storage` write after the keystroke that caused it.
+ * Two things followed, both of them felt on every character typed:
+ *
+ *  - a controlled `<input>` was handed back its *old* value when the change
+ *    handler returned and the new one an await later, and assigning a value to a
+ *    text field puts the caret at the end of it — so the caret jumped to the end
+ *    on every keystroke;
+ *  - each keystroke cost a message round trip, a storage write and a broadcast
+ *    to every open tab, with the tree, the editor and the log all re-rendering
+ *    twice for one letter.
+ *
+ * So the mutation is applied to the local copy synchronously — which is the
+ * contract React expects of a controlled input, and what leaves the caret alone
+ * — and the write through to the worker is coalesced onto a short timer.
+ * Broadcasts are ignored while an edit is unwritten or in flight, since those
+ * are echoes of state that has already been typed past.
+ *
+ * The trade is that an MCP edit landing in the same breath as a keystroke loses
+ * to the keystroke rather than the other way round. That was already true — a
+ * patch built from the props of an earlier render carried the older values into
+ * the freshly read workspace anyway — and it is the better direction to lose in.
  */
 export function useWorkspace(): { workspace: Workspace | null; update: Update } {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
 
+  // Mirrors the state so an update can read the current workspace without
+  // waiting for a render: several edits can land before React comes back round.
+  const local = useRef<Workspace | null>(null);
+  const unwritten = useRef(false);
+  const inFlight = useRef(0);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  /** Resolved once the edits they were handed out for have reached the worker. */
+  const waiting = useRef<(() => void)[]>([]);
+
+  const flush = useCallback(async (): Promise<void> => {
+    if (timer.current !== undefined) {
+      clearTimeout(timer.current);
+      timer.current = undefined;
+    }
+
+    const next = local.current;
+    const settle = waiting.current;
+    waiting.current = [];
+
+    if (!next || !unwritten.current) {
+      for (const done of settle) done();
+      return;
+    }
+
+    unwritten.current = false;
+    inFlight.current += 1;
+    try {
+      await putWorkspace(next);
+    } finally {
+      inFlight.current -= 1;
+      for (const done of settle) done();
+    }
+  }, []);
+
   useEffect(() => {
-    void (async () => setWorkspace(await getWorkspace()))();
+    void (async () => {
+      const initial = await getWorkspace();
+      // A broadcast or an edit may have beaten the first read home, and neither
+      // should be undone by it.
+      if (!initial || local.current) return;
+      local.current = initial;
+      setWorkspace(initial);
+    })();
 
     const listener = (message: WorkerBroadcast): void => {
-      if (message?.type === 'workspace-changed') setWorkspace(message.workspace);
+      if (message?.type !== 'workspace-changed') return;
+      if (unwritten.current || inFlight.current > 0) return;
+      local.current = message.workspace;
+      setWorkspace(message.workspace);
     };
     chrome.runtime.onMessage.addListener(listener);
     return () => chrome.runtime.onMessage.removeListener(listener);
   }, []);
 
-  // Writes are serialised. Each update re-reads the authoritative workspace from
-  // the worker, so two overlapping edits (typing quickly, or clicking while a
-  // save is in flight) would otherwise both read the same state and the second
-  // write would silently discard the first.
-  const chain = useRef<Promise<void>>(Promise.resolve());
+  // Coalescing leaves a window in which the panel could go away with an edit
+  // still only in memory, so close it on the way out.
+  useEffect(() => {
+    const leave = (): void => void flush();
+    window.addEventListener('pagehide', leave);
+    return () => {
+      window.removeEventListener('pagehide', leave);
+      leave();
+    };
+  }, [flush]);
 
-  const update = useCallback((fn: (current: Workspace) => Workspace): Promise<void> => {
-    const run = chain.current.then(async () => {
-      const current = await getWorkspace();
-      if (!current) return;
+  const update = useCallback(
+    (fn: (current: Workspace) => Workspace): Promise<void> => {
+      const current = local.current;
+      if (!current) return Promise.resolve();
       const next = fn(current);
-      if (next === current) return;
-      setWorkspace(next); // optimistic; the broadcast confirms
-      await putWorkspace(next);
-    });
-    chain.current = run.catch(() => undefined);
-    return run;
-  }, []);
+      if (next === current) return Promise.resolve();
+
+      local.current = next;
+      setWorkspace(next);
+      unwritten.current = true;
+
+      const written = new Promise<void>((resolve) => waiting.current.push(resolve));
+      // Timed from the *first* pending edit rather than the last, so holding a
+      // key down still saves every 120ms instead of nothing until you stop.
+      timer.current ??= setTimeout(() => void flush(), FLUSH_DELAY_MS);
+      return written;
+    },
+    [flush],
+  );
 
   return { workspace, update };
 }
+
 
 /**
  * Every request the interceptor saw on the inspected tab, mocked or passed.
