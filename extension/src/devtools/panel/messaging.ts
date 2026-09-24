@@ -235,7 +235,12 @@ export function useWorkspace(): { workspace: Workspace | null; update: Update } 
  * always have them. It does not always, so both are kept now and `useNetworkLog`
  * pairs them up.
  */
-export function usePageHits(limit = 300): { hits: HitRecord[]; clear: () => Promise<void> } {
+export function usePageHits(limit = 300): {
+  hits: HitRecord[];
+  clear: () => Promise<void>;
+  /** Empties this panel's view only; the worker keeps its record for the MCP tools. */
+  reset: () => void;
+} {
   const [hits, setHits] = useState<HitRecord[]>([]);
 
   useEffect(() => {
@@ -259,7 +264,9 @@ export function usePageHits(limit = 300): { hits: HitRecord[]; clear: () => Prom
     setHits([]);
   }, []);
 
-  return { hits, clear };
+  const reset = useCallback(() => setHits([]), []);
+
+  return { hits, clear, reset };
 }
 
 /** Whether the MCP bridge is currently connected, for the status dot. */

@@ -38,6 +38,7 @@ const CAPTURE_FOLDER = 'Captured';
 const CATEGORY_KEY = 'mockman:log-categories';
 const INVERT_KEY = 'mockman:log-invert';
 const PREFLIGHT_KEY = 'mockman:log-preflights';
+const PRESERVE_KEY = 'mockman:log-preserve';
 
 /**
  * The resource-type chips and the Invert switch.
@@ -147,7 +148,8 @@ export function HitLog({
   targetFolderId: string | null;
   onCreated: (mockId: string) => void;
 }): React.JSX.Element {
-  const { entries, clear } = useNetworkLog();
+  const [preserveLog, setPreserveLog] = useState(() => readStored(PRESERVE_KEY) === 'true');
+  const { entries, clear } = useNetworkLog(preserveLog);
   const [filter, setFilter] = useState('');
   const [onlyMocked, setOnlyMocked] = useState(false);
   const [capturing, setCapturing] = useState<string | null>(null);
@@ -333,6 +335,20 @@ export function HitLog({
             onChange={(e) => setOnlyMocked(e.target.checked)}
           />
           Mocked only
+        </label>
+        <label
+          className="inline-check"
+          title="Keep rows across page reloads and navigations instead of starting fresh"
+        >
+          <input
+            type="checkbox"
+            checked={preserveLog}
+            onChange={(e) => {
+              setPreserveLog(e.target.checked);
+              writeStored(PRESERVE_KEY, e.target.checked);
+            }}
+          />
+          Preserve log
         </label>
         <span className="hint">
           Mocked requests never reach the network, so they do <em>not</em> appear in the Network

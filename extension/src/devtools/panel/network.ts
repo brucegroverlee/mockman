@@ -469,9 +469,24 @@ export interface NetworkLog {
   clear: () => Promise<void>;
 }
 
-export function useNetworkLog(): NetworkLog {
+/**
+ * @param preserve When false, the log empties each time the inspected page
+ *   navigates or reloads — Chrome's Network panel default. Only the panel's view
+ *   is emptied: the worker keeps its hits, so `get_hit_log` is unaffected.
+ */
+export function useNetworkLog(preserve: boolean): NetworkLog {
   const { entries: fromDevtools, clear: clearPassed } = useRealTraffic();
-  const { hits, clear: clearHits } = usePageHits();
+  const { hits, clear: clearHits, reset: resetHits } = usePageHits();
+
+  useEffect(() => {
+    if (preserve) return;
+    const onNavigated = (): void => {
+      clearPassed();
+      resetHits();
+    };
+    chrome.devtools.network.onNavigated.addListener(onNavigated);
+    return () => chrome.devtools.network.onNavigated.removeListener(onNavigated);
+  }, [preserve, clearPassed, resetHits]);
 
   const entries = useMemo(() => {
     const mocked = hits.filter((hit) => hit.outcome === 'mocked');
