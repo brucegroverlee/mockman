@@ -69,9 +69,12 @@ files. **Two differ** — those are called out:
 | Zed | Zed settings | `context_servers` |
 
 Because a project-scoped `.mcp.json` is committable, this repo ships one. Clone,
-`pnpm build`, and Claude Code picks it up with no hand-editing. (The absolute paths in
-it are specific to this checkout — regenerate with `pnpm mcp-config` if you move the
-repo.)
+`pnpm build`, and Claude Code picks it up with no hand-editing. It contains no
+machine-specific paths: `command` is `node` from PATH (a real `node.exe` on Windows,
+not a `.cmd` shim), and the server path is `${CLAUDE_PROJECT_DIR:-.}/mcp-server/dist/index.js`,
+which resolves to the repo root either way, since Claude Code starts project-scoped
+servers there. It is read by Claude Code only; other clients use their own config
+files, which `pnpm mcp-config` generates.
 
 ### Windows: why the config points at `node.exe` by absolute path
 

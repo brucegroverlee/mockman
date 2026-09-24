@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "mockman": {
-      "command": "C:\\Users\\grover\\development\\mockman\\node_modules\\.bin\\node.exe",
-      "args": ["C:\\Users\\grover\\development\\mockman\\mcp-server\\dist\\index.js"]
+      "command": "node",
+      "args": ["${CLAUDE_PROJECT_DIR:-.}/mcp-server/dist/index.js"]
     }
   }
 }
