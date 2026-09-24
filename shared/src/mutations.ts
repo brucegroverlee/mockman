@@ -35,7 +35,8 @@ import type {
 
 export type EnableKind = 'workspace' | 'folder' | 'mock' | 'tag';
 
-function newId(prefix: string): string {
+/** A fresh node or tag id. Exported for share.ts, which re-ids imported nodes. */
+export function newId(prefix: string): string {
   return `${prefix}_${crypto.randomUUID().slice(0, 8)}`;
 }
 
@@ -82,7 +83,7 @@ export function defaultMatch(): MockMatch {
 // Tags
 // ---------------------------------------------------------------------------
 
-const TAG_COLORS = ['#e06c75', '#e5c07b', '#98c379', '#56b6c2', '#61afef', '#c678dd'];
+export const TAG_COLORS = ['#e06c75', '#e5c07b', '#98c379', '#56b6c2', '#61afef', '#c678dd'];
 
 export function createTag(
   workspace: Workspace,

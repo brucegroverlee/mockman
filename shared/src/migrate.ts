@@ -155,7 +155,12 @@ function migrateNode(value: unknown, order: number): TreeNode | null {
   return folder;
 }
 
-function migrateNodes(value: unknown): TreeNode[] {
+/**
+ * Normalises a list of raw nodes, as they appear under a workspace's `tree`.
+ * Ids and tag ids are kept as found; callers importing into an existing
+ * workspace must replace them (see share.ts).
+ */
+export function migrateNodes(value: unknown): TreeNode[] {
   if (!Array.isArray(value)) return [];
 
   // Honour any `order` the source carried before discarding it for array

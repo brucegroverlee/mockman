@@ -213,6 +213,43 @@ before.
 document's tab ids would silently start mocking an unrelated tab. Callers that *do*
 hold authoritative ids (a live read from the browser) put them back afterwards.
 
+## Sharing: the export document
+
+The **Export** and **Import** buttons in the detail pane (and **Import… / Export all…**
+when nothing is selected) use a smaller document than the workspace, built in
+`shared/src/share.ts`:
+
+```json
+{
+  "mockman": 1,
+  "exportedAt": "2026-09-24T12:00:00.000Z",
+  "tags": [{ "name": "checkout", "color": "#e06c75" }],
+  "nodes": [
+    {
+      "kind": "folder",
+      "name": "TT Service",
+      "enabled": true,
+      "tags": ["checkout"],
+      "children": [
+        { "kind": "mock", "name": "TTPay inactive", "enabled": true,
+          "match": { "method": "GET", "urlPattern": "*/ttpay/*", "patternKind": "glob" },
+          "response": { "status": 200, "headers": {}, "body": "{}", "bodyKind": "json", "delayMs": 0 } }
+      ]
+    }
+  ]
+}
+```
+
+- **No ids, `order` or `expanded`.** An import always assigns fresh ids, so two people
+  importing the same file never collide, and importing twice gives two copies.
+- **Tags travel by name** and are matched case-insensitively against the
+  destination's tags; missing ones are created with the exported colour.
+- Import also accepts a bare mock or folder, an array of them, or a whole workspace
+  from `export_workspace`. It goes through `migrateNodes`, but first rejects any mock
+  without a `match.urlPattern` — migration would fill in `*`, and a typo in a pasted
+  document should not become a mock that answers every request.
+- A selected folder imports *into* itself; a selected mock imports *beside* itself.
+
 ## Example workspace
 
 ```json

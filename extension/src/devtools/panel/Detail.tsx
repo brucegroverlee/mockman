@@ -16,11 +16,14 @@ import type {
   Folder,
   HttpMethod,
   Mock,
+  TreeNode,
   Workspace,
 } from '@mockman/shared';
 
 import { CodeEditor } from './CodeEditor.tsx';
 import { inspectedTabId } from './messaging.ts';
+import { SharePanel } from './SharePanel.tsx';
+import type { ShareRequest } from './SharePanel.tsx';
 import type { Update } from './messaging.ts';
 import {
   BODY_MODE_HINT,
@@ -52,12 +55,30 @@ export function Detail({
     [workspace.tree, selectedId],
   );
 
-  if (!located) {
+  // Import/export replaces the editor in this pane until Back is pressed.
+  // Selecting something else in the tree is also a way out — including the
+  // selection an import makes of what it just added.
+  const [share, setShare] = useState<ShareRequest | null>(null);
+  const [shareFor, setShareFor] = useState(selectedId);
+  if (shareFor !== selectedId) {
+    setShareFor(selectedId);
+    setShare(null);
+  }
+
+  if (share) {
     return (
-      <div className="detail empty-detail">
-        <p className="empty">Select a mock on the left to edit it.</p>
-      </div>
+      <SharePanel
+        request={share}
+        workspace={workspace}
+        update={update}
+        onClose={() => setShare(null)}
+        onImported={onSelect}
+      />
     );
+  }
+
+  if (!located) {
+    return <EmptyDetail workspace={workspace} onShare={setShare} />;
   }
 
   if (isFolder(located.node)) {
@@ -68,6 +89,7 @@ export function Detail({
         ancestors={located.ancestors}
         update={update}
         onSelect={onSelect}
+        onShare={setShare}
       />
     );
   }
@@ -79,6 +101,7 @@ export function Detail({
       ancestors={located.ancestors}
       update={update}
       onSelect={onSelect}
+      onShare={setShare}
     />
   );
 }
@@ -146,17 +169,46 @@ function TagStrip({
   );
 }
 
+/**
+ * Import puts the incoming nodes *inside* a selected folder, and *beside* a
+ * selected mock — the same rule the tree's "new folder"/"new mock" buttons use.
+ */
 function NodeActions({
-  nodeId,
+  node,
+  parent,
   update,
   onSelect,
+  onShare,
 }: {
-  nodeId: string;
+  node: TreeNode;
+  parent: Folder | null;
   update: Update;
   onSelect: (id: string | null) => void;
+  onShare: (request: ShareRequest) => void;
 }): React.JSX.Element {
+  const nodeId = node.id;
+  const into = isFolder(node) ? node : parent;
+
   return (
     <span className="node-actions">
+      <button
+        title={into ? `Import mocks into “${into.name}”` : 'Import mocks at the top level'}
+        onClick={() =>
+          onShare({
+            mode: 'import',
+            parentId: into?.id ?? null,
+            title: into ? `Import into “${into.name}”` : 'Import to the top level',
+          })
+        }
+      >
+        Import
+      </button>
+      <button
+        title={isFolder(node) ? 'Export this folder and everything in it as JSON' : 'Export this mock as JSON'}
+        onClick={() => onShare({ mode: 'export', nodes: [node], title: `Export “${node.name}”` })}
+      >
+        Export
+      </button>
       <button
         title="Duplicate"
         onClick={() =>
@@ -183,6 +235,40 @@ function NodeActions({
   );
 }
 
+/** Nothing selected: the one place to reach whole-workspace import and export. */
+function EmptyDetail({
+  workspace,
+  onShare,
+}: {
+  workspace: Workspace;
+  onShare: (request: ShareRequest) => void;
+}): React.JSX.Element {
+  return (
+    <div className="detail empty-detail">
+      <div className="empty">
+        <p>Select a mock on the left to edit it.</p>
+        <span className="node-actions center">
+          <button
+            onClick={() =>
+              onShare({ mode: 'import', parentId: null, title: 'Import to the top level' })
+            }
+          >
+            Import…
+          </button>
+          <button
+            disabled={workspace.tree.length === 0}
+            onClick={() =>
+              onShare({ mode: 'export', nodes: workspace.tree, title: 'Export all mocks' })
+            }
+          >
+            Export all…
+          </button>
+        </span>
+      </div>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Folder
 // ---------------------------------------------------------------------------
@@ -193,12 +279,14 @@ function FolderDetail({
   ancestors,
   update,
   onSelect,
+  onShare,
 }: {
   workspace: Workspace;
   folder: Folder;
   ancestors: Folder[];
   update: Update;
   onSelect: (id: string | null) => void;
+  onShare: (request: ShareRequest) => void;
 }): React.JSX.Element {
   const counts = useMemo(() => {
     let mocks = 0;
@@ -229,7 +317,13 @@ function FolderDetail({
             void update((w) => renameNode(w, folder.id, name));
           }}
         />
-        <NodeActions nodeId={folder.id} update={update} onSelect={onSelect} />
+        <NodeActions
+          node={folder}
+          parent={ancestors.at(-1) ?? null}
+          update={update}
+          onSelect={onSelect}
+          onShare={onShare}
+        />
       </div>
 
       <div className="field-row">
@@ -259,12 +353,14 @@ function MockDetail({
   ancestors,
   update,
   onSelect,
+  onShare,
 }: {
   workspace: Workspace;
   mock: Mock;
   ancestors: Folder[];
   update: Update;
   onSelect: (id: string | null) => void;
+  onShare: (request: ShareRequest) => void;
 }): React.JSX.Element {
   const [tab, setTab] = useState<PayloadTab>('response');
   // MVP: the pattern tester is hidden, see the commented-out block below.
@@ -307,7 +403,13 @@ function MockDetail({
             void update((w) => renameNode(w, mock.id, name));
           }}
         />
-        <NodeActions nodeId={mock.id} update={update} onSelect={onSelect} />
+        <NodeActions
+          node={mock}
+          parent={ancestors.at(-1) ?? null}
+          update={update}
+          onSelect={onSelect}
+          onShare={onShare}
+        />
       </div>
 
       {!activation.active && activation.reason !== 'tab-not-targeted' && (

@@ -1113,3 +1113,82 @@ button.link:hover {
   color: var(--accent);
   border-color: currentColor;
 }
+
+/* --------------------------------------------------------------------------
+   Share view (import / export) — replaces the editor in the detail pane
+   -------------------------------------------------------------------------- */
+
+.share-head,
+.share-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.share-head {
+  margin-bottom: 4px;
+}
+
+.share-head strong {
+  font-size: 13px;
+}
+
+button.back {
+  font-weight: 600;
+}
+
+/* Takes whatever height the pane has, like the payload editor does. */
+.share-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 4px 0 8px;
+  border-radius: 4px;
+}
+
+.share-body .code {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.share-body.dropping {
+  outline: 2px dashed var(--accent);
+  outline-offset: 2px;
+}
+
+.share-foot {
+  flex-wrap: wrap;
+}
+
+.share-foot .small,
+.ok.small {
+  font-size: 11px;
+}
+
+.ok {
+  color: var(--mocked);
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+}
+
+button.primary:hover:not(:disabled) {
+  background: var(--accent);
+  filter: brightness(1.1);
+}
+
+.empty-detail .empty {
+  text-align: center;
+}
+
+.empty-detail .empty p {
+  margin: 0 0 8px;
+}
+
+.node-actions.center {
+  justify-content: center;
+}

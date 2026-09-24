@@ -7,3 +7,4 @@ export * from './messages.ts';
 export * from './migrate.ts';
 export * from './mutations.ts';
 export * from './search.ts';
+export * from './share.ts';
