@@ -488,7 +488,6 @@ function MockDetail({
           />
         </label>
 
-        {/* MVP: the optional label badge is hidden for now.
         <label className="field grow">
           <span>Label</span>
           <input
@@ -503,7 +502,6 @@ function MockDetail({
             onChange={(e) => patch({ label: e.target.value })}
           />
         </label>
-        */}
       </div>
 
       <div className="field-row">
