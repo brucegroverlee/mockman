@@ -120,6 +120,13 @@
               removeListener(fn) { this._listeners = this._listeners.filter((f) => f !== fn); },
               _emit(entry) { this._listeners.forEach((fn) => fn(entry)); },
             },
+            // Fired when the inspected page navigates; `_emit(url)` fakes a reload.
+            onNavigated: {
+              _listeners: [],
+              addListener(fn) { this._listeners.push(fn); },
+              removeListener(fn) { this._listeners = this._listeners.filter((f) => f !== fn); },
+              _emit(url) { this._listeners.forEach((fn) => fn(url)); },
+            },
             // What DevTools had already recorded before the panel opened.
             _har: PRE_RECORDED,
             getHAR(callback) {

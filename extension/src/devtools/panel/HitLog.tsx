@@ -141,12 +141,17 @@ export function HitLog({
   update,
   targetFolderId,
   onCreated,
+  collapsed,
+  onToggleCollapsed,
 }: {
   workspace: Workspace;
   update: Update;
   /** The selected folder, if any: captured mocks land there. */
   targetFolderId: string | null;
   onCreated: (mockId: string) => void;
+  /** Folded down to the header row. Still recording — only the rows are hidden. */
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
 }): React.JSX.Element {
   const [preserveLog, setPreserveLog] = useState(() => readStored(PRESERVE_KEY) === 'true');
   const { entries, clear } = useNetworkLog(preserveLog);
@@ -228,7 +233,9 @@ export function HitLog({
   useEffect(() => {
     const el = rowsRef.current;
     if (el && stuckToBottom.current) el.scrollTop = el.scrollHeight;
-  }, [visible]);
+    // `collapsed` too: rows that arrived while folded away should still leave
+    // the list at its newest row when it opens again.
+  }, [visible, collapsed]);
 
   // Stable, so `Row` can skip re-rendering when only the workspace moved.
   const capture = useCallback(
@@ -293,8 +300,16 @@ export function HitLog({
   );
 
   return (
-    <section className="log">
+    <section className={`log ${collapsed ? 'collapsed' : ''}`}>
       <div className="log-head">
+        <button
+          className={`icon log-toggle ${collapsed ? 'collapsed' : ''}`}
+          title={collapsed ? 'Expand the hit log' : 'Collapse the hit log'}
+          aria-expanded={!collapsed}
+          onClick={onToggleCollapsed}
+        >
+          <ChevronDownIcon />
+        </button>
         <strong>Hit log</strong>
         <span className="log-counts">
           <span className="badge mocked">{counts.mocked}</span> mocked
@@ -434,6 +449,22 @@ export function HitLog({
         ))}
       </div>
     </section>
+  );
+}
+
+/** Points down while the log is open ("fold it away"), up while it is collapsed. */
+function ChevronDownIcon(): React.JSX.Element {
+  return (
+    <svg className="chevron" viewBox="0 0 16 16" aria-hidden="true">
+      <path
+        d="M3.5 6 8 10.5 12.5 6"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }
 

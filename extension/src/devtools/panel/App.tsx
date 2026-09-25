@@ -19,7 +19,8 @@ import { readStored, writeStored } from './storage.ts';
  *   ├ hit log ────────────────────────────────────┤  what this tab actually did
  *   └─────────────────────────────────────────────┘
  *
- * Both dividers are draggable, and both remember where you put them.
+ * Both dividers are draggable, and both remember where you put them. The log
+ * can also be collapsed to its header row from the chevron at its left edge.
  *
  * The hit log's height is **explicit**, not content-derived. That is the whole
  * point: rows arrive continuously while you work, and a log that grew with them
@@ -50,6 +51,16 @@ export function App(): React.JSX.Element {
 
   const log = useDragSize(LOG_KEY, LOG_DEFAULT, measureLogHeight);
 
+  // Collapsed, the log shrinks to its header row and hands the rest of the
+  // panel to the tree and editor. It stays mounted, so it keeps recording while
+  // folded away, and its dragged height is kept for when it comes back.
+  const [logCollapsed, setLogCollapsed] = useState(() => readStored(LOG_COLLAPSED_KEY) === 'true');
+  const toggleLog = useCallback(() => {
+    const next = !logCollapsed;
+    setLogCollapsed(next);
+    writeStored(LOG_COLLAPSED_KEY, next);
+  }, [logCollapsed]);
+
   // A selected node can vanish underneath us — deleted here, or over MCP.
   useEffect(() => {
     if (!workspace || !selectedId) return;
@@ -66,7 +77,15 @@ export function App(): React.JSX.Element {
   if (!workspace) return <div className="loading">Connecting to the extension…</div>;
 
   return (
-    <div className="app" ref={shell} style={{ gridTemplateRows: `auto minmax(0, 1fr) 4px ${log.size}px` }}>
+    <div
+      className="app"
+      ref={shell}
+      style={{
+        gridTemplateRows: logCollapsed
+          ? 'auto minmax(0, 1fr) auto'
+          : `auto minmax(0, 1fr) 4px ${log.size}px`,
+      }}
+    >
       <header className="appbar">
         <label className="master" title="Nothing is mocked anywhere while this is off">
           <input
@@ -127,14 +146,17 @@ export function App(): React.JSX.Element {
         }
       />
 
-      <div
-        className="log-splitter"
-        role="separator"
-        aria-orientation="horizontal"
-        title="Drag to resize the log; double-click to reset"
-        onPointerDown={log.onPointerDown}
-        onDoubleClick={log.reset}
-      />
+      {/* Nothing to resize while collapsed; the grid drops its track too. */}
+      {!logCollapsed && (
+        <div
+          className="log-splitter"
+          role="separator"
+          aria-orientation="horizontal"
+          title="Drag to resize the log; double-click to reset"
+          onPointerDown={log.onPointerDown}
+          onDoubleClick={log.reset}
+        />
+      )}
 
       <ErrorBoundary area="hit log">
         <HitLog
@@ -142,6 +164,8 @@ export function App(): React.JSX.Element {
           update={update}
           targetFolderId={selectedFolderId}
           onCreated={setSelectedId}
+          collapsed={logCollapsed}
+          onToggleCollapsed={toggleLog}
         />
       </ErrorBoundary>
     </div>
@@ -157,6 +181,7 @@ const MAX_WIDTH = 640;
 const LOG_KEY = 'mockman:log-height';
 const LOG_DEFAULT = 160;
 const LOG_MIN = 56;
+const LOG_COLLAPSED_KEY = 'mockman:log-collapsed';
 /** Never let the log squeeze the tree and editor below this. */
 const MIN_BODY_HEIGHT = 140;
 

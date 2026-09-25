@@ -874,6 +874,35 @@ button.danger:hover:not(:disabled) {
   flex: none;
 }
 
+/* Collapsed: only the header row stays. Hidden rather than unmounted, so the
+   log keeps recording and keeps its scroll position underneath. */
+.log.collapsed .log-filters,
+.log.collapsed .log-rows {
+  display: none;
+}
+
+/* The splitter is gone while collapsed, so the header draws its own edge. */
+.log.collapsed .log-head {
+  border-top: 1px solid var(--line);
+  border-bottom: 0;
+}
+
+.log-toggle {
+  border: 0;
+  background: none;
+  color: var(--muted);
+  margin-left: -4px;
+}
+
+.log-toggle:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+.log-toggle.collapsed .chevron {
+  transform: rotate(180deg);
+}
+
 .log-head .hint {
   flex: 1;
   min-width: 0;
