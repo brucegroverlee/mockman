@@ -40,6 +40,11 @@ is already committed for Claude Code.
 
 Full tool reference: [docs/06-mcp.md](docs/06-mcp.md).
 
+Agent skill: [skills/mockman/SKILL.md](skills/mockman/SKILL.md) is a vendor-neutral
+prompt that teaches any AI client how to use these tools well. Drop the `mockman`
+folder into your client's skills directory (e.g. `.claude/skills/`), or paste the file
+into a system or project prompt.
+
 ## Three things that will surprise you
 
 - **Mocked requests do not appear in the DevTools Network panel.** They never reach
